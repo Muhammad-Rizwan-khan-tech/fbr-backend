@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from './context/AuthContext';
 import { Shell } from './components/layout/Shell';
 import { LoginPage } from './pages/LoginPage';
+import { ActivationPage } from './pages/ActivationPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { InvoicesPage } from './pages/InvoicesPage';
 import { CreateInvoicePage } from './pages/CreateInvoicePage';
@@ -15,19 +16,28 @@ import { CreditDebitNotesPage } from './pages/CreditDebitNotesPage';
 import { DeveloperPortalPage } from './pages/DeveloperPortalPage';
 
 export const App: React.FC = () => {
-  const { token, isLoading } = useAuth();
+  const { token, isActivated, isLoading } = useAuth();
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
+  const [showLogin, setShowLogin] = useState<boolean>(() => {
+    // If the device already has token or isActivated flag in storage, default to login view
+    return isActivated;
+  });
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white text-xs font-semibold">
-        Loading FBR Invoice Cloud...
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center text-white text-xs font-semibold space-y-3">
+        <div className="w-8 h-8 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin"></div>
+        <p className="text-slate-300">Initializing FBR Invoice Cloud Desktop Engine...</p>
       </div>
     );
   }
 
+  // Not authenticated: Show either Activation screen or Login screen
   if (!token) {
-    return <LoginPage />;
+    if (showLogin) {
+      return <LoginPage onSwitchToActivation={() => setShowLogin(false)} />;
+    }
+    return <ActivationPage onSwitchToLogin={() => setShowLogin(true)} />;
   }
 
   const renderContent = () => {

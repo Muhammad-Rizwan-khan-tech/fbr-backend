@@ -2,7 +2,11 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { CheckCircle2, Lock, Mail, Building, User, Phone, ArrowRight, ShieldCheck } from 'lucide-react';
 
-export const LoginPage: React.FC = () => {
+interface LoginPageProps {
+  onSwitchToActivation?: () => void;
+}
+
+export const LoginPage: React.FC<LoginPageProps> = ({ onSwitchToActivation }) => {
   const { login, register } = useAuth();
   const [isRegistering, setIsRegistering] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -262,6 +266,18 @@ export const LoginPage: React.FC = () => {
                 <ArrowRight className="w-4 h-4" />
               </button>
             </form>
+          )}
+
+          {onSwitchToActivation && (
+            <div className="mt-4 pt-4 border-t border-slate-100 text-center">
+              <button
+                type="button"
+                onClick={onSwitchToActivation}
+                className="text-xs text-emerald-600 hover:text-emerald-700 font-semibold"
+              >
+                Have an Activation Secret Key? Activate Desktop Terminal &rarr;
+              </button>
+            </div>
           )}
         </div>
 

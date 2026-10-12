@@ -1,185 +1,214 @@
-# FBR Invoice Cloud --- Production SaaS Platform
+# FBR Invoice Cloud — Windows Desktop SaaS Platform & Super Admin Panel
 
-**FBR Invoice Cloud** is a multi-tenant Web SaaS platform architected for Pakistani businesses to create, validate, manage, audit, and transmit digital tax invoices in compliance with the **Federal Board of Revenue (FBR)** Digital Invoicing regulations (Sales Tax Act 1990).
+**FBR Invoice Cloud** is an enterprise-grade multi-tenant fiscal invoicing platform for Pakistani businesses, compliant with the **Federal Board of Revenue (FBR)** Digital Invoicing regulations (Sales Tax Act 1990).
 
-> **Regulatory Notice:** This application strictly separates tax invoice operations from CRM workflows. External transmission to the FBR Digital Invoicing central ledger is handled via modular adapters (Mock / Sandbox / Licensed Integrator / PRAL).
+The platform consists of three core components:
+1. **Windows Desktop Application**: Built with React 18, TypeScript, Tailwind CSS, and a Tauri v2 wrapper. Features first-launch hardware-bound activation, permanent license verification, dynamic backend endpoint configuration, and full offline-safe invoicing capabilities.
+2. **Central Hosted Backend**: High-performance Python FastAPI service managing permanent licenses, one-time secret redemption, token rotation, AES-256-GCM encrypted FBR credentials, deterministic Pakistan tax calculation engine, and asynchronous FBR submission adapters.
+3. **Laravel Super Admin Panel (`admin-panel/`)**: Standalone PHP Laravel 11 dashboard for platform owners to register customer organizations, configure authorized FBR credentials, issue permanent licenses with one-time activation secret reveals, monitor active devices, and track audit trails.
 
 ---
 
 ## Architecture Overview
 
 ```text
-                      [ React 18 + TypeScript + Tailwind CSS ]
-                                         │
-                                   HTTP / REST
-                                         ▼
-                     [ FastAPI Backend Gateway (/api/v1) ]
-                                         │
-        ┌────────────────────────────────┼────────────────────────────────┐
-        ▼                                ▼                                ▼
- [ Auth & Tenants ]             [ Tax Invoice Engine ]             [ FBR Service ]
- - Multi-tenant context         - Line item gross/discount         - Idempotent submit
- - RBAC (Admin/Operator/Tax)    - Taxable amount calculation       - Attempt logs
- - Row-level tenant_id          - 18% GST / Provincial rates       - Exponential retry
-        │                                │                                │
-        └────────────────────────────────┼────────────────────────────────┘
-                                         ▼
-                       [ FBR Digital Invoicing Adapter ]
-                                         │
-                        ┌────────────────┴────────────────┐
-                        ▼                                 ▼
-             [ Mock / Demo Adapter ]             [ PRAL / Integrator ]
-             - FBR-2026-XXXXX numbering          - Live HTTPS API
-             - Digital signature QR              - Authorized tokens
-             - 6 Blueprint test scenarios
+ ┌────────────────────────────────────────────────────────┐
+ │            Windows Desktop Workstation                 │
+ │   [ React 18 + TypeScript + Tailwind CSS (Tauri v2) ]  │
+ │   - First-Launch Activation Screen (ACT-XXXX-...)      │
+ │   - Hardware Fingerprint Binding (SHA-256)             │
+ │   - Customer Dashboard, Invoices & FBR Submission      │
+ └───────────────────────────┬────────────────────────────┘
+                             │ HTTPS / TLS (JWT Bearer)
+                             ▼
+ ┌────────────────────────────────────────────────────────┐
+ │           Centrally Hosted FastAPI Backend             │
+ │   - Permanent Licensing & Device Session Management    │
+ │   - AES-256-GCM Encrypted FBR Integration Credentials  │
+ │   - Pakistan Fiscal Engine (18% GST, ROUND_HALF_UP)    │
+ │   - Multi-tenant PostgreSQL + Redis/Celery Queue       │
+ └───────────────────────────▲────────────────────────────┘
+                             │ Server-to-Server (X-Admin-Key)
+                             │
+ ┌───────────────────────────┴────────────────────────────┐
+ │         PHP Laravel 11 Super Admin Panel               │
+ │   - Customer Organization Management & Branches        │
+ │   - Controlled One-Time Activation Key Reveal          │
+ │   - FBR Credential Encryption & Live Handshake Test    │
+ │   - Device Registry & Revocation Management            │
+ │   - Security Audit Logs & Real-Time KPI Dashboards     │
+ └────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Core Capabilities Implemented
+## Key Business & Security Policies
 
-1. **Multi-Tenant SaaS Foundation**:
-   - Strict organization isolation across all database queries (`tenant_id`).
-   - Immutable Taxpayer profile (Legal Name, NTN, STRN, Province, Address).
-   - Multi-branch support (e.g., Karachi Head Office `KHI-01`, Lahore Center `LHR-01`).
-   - Server-side atomic invoice numbering (`INV-{BRANCH}-{YEAR}-{SEQ}`).
+1. **Permanent License Guarantee**:
+   - Customers receive lifetime permanent licenses.
+   - Strictly **no recurring subscription expiry** or artificial lockouts.
+   - Access continues indefinitely until explicitly revoked by an authorized platform administrator.
 
-2. **Pakistan Tax Engine**:
-   - Deterministic rounding (`ROUND_HALF_UP`) to 2 decimal places.
-   - Formula:
-     $$\text{Gross Amount} = \text{Quantity} \times \text{Unit Price}$$
-     $$\text{Taxable Amount} = \text{Gross Amount} - \text{Discount}$$
-     $$\text{Tax Amount} = \text{Taxable Amount} \times \frac{\text{Tax Rate \%}}{100}$$
-     $$\text{Grand Total} = \sum \text{Taxable Amount} + \sum \text{Tax Amount} + \text{Other Charges}$$
-   - FBR statutory reference data pre-seeded:
-     - Standard 18% Federal Sales Tax, 15% SRB Provincial Services, 1% Reduced, 0% Exempt.
-     - Pakistan 8-digit HS Codes (e.g. `8471.30.10`, `8517.13.00`, `4811.90.00`).
-     - Standard Units of Measurement (NOS, KGS, LTR, MTR, BOX, BAG).
+2. **Controlled One-Time Activation Secrets**:
+   - Admins generate unique cryptographically secure keys (`ACT-XXXX-XXXX-XXXX-XXXX`).
+   - The plaintext key is revealed **strictly once** in an administrative confirmation modal.
+   - Stored in the backend exclusively as an irreversible `SHA-256` hash.
+   - Replay prevention: Keys cannot be reused once redeemed.
 
-3. **Demo / Mock FBR Adapter**:
-   - Decoupled `FBRAdapter` interface (`validate_invoice`, `submit_invoice`, `parse_response`, `get_status`).
-   - `MockFBRAdapter` supporting all 6 Blueprint demo scenarios:
-     1. **Valid Submission**: Generates official FBR invoice number (e.g. `FBR-20261004-981240`) and signed verification QR code.
-     2. **Validation Error**: Highlights invalid NTN/STRN or missing HS codes.
-     3. **FBR Rejection**: Simulates duplicate invoice reference or inactive registration.
-     4. **Network Timeout**: Simulates 504 gateway timeout with `is_retryable=True`.
-     5. **Pending Queue**: Simulates asynchronous fiscal batch processing.
-     6. **Retry Recovery**: Successfully recovers failed or timed-out transmissions.
+3. **Client-Side Hardware Binding**:
+   - On first launch, the desktop application hashes system entropy (UUID, platform, hardware specs) into a unique device fingerprint.
+   - The backend atomically binds the terminal to the organization up to authorized device capacity.
+   - Refresh tokens rotate atomically and enforce fingerprint consistency.
 
-4. **Modern Web Frontend**:
-   - Clean, high-density SaaS dashboard with KPI summary cards.
-   - Dynamic Invoice creation with live tax calculations.
-   - Interactive FBR Submission Center with attempt timeline and retry triggers.
-   - Modal QR Code renderer for digital invoice verification.
-   - Customer and Product master data management.
+4. **Zero Client FBR Credential Exposure**:
+   - Platform administrators manage FBR integration credentials centrally.
+   - Credentials are encrypted at rest with `AES-256-GCM` using a 256-bit server master key.
+   - Sensitive credentials are masked in all API responses (`fbr_****_9988`) and never transmitted to client desktop workstations.
+
+5. **100% Fiscal Business Logic Preservation**:
+   - Full compliance with Pakistan Sales Tax Act 1990.
+   - Deterministic 2-decimal rounding with `ROUND_HALF_UP`.
+   - Complete support for 8-digit HS codes, Units of Measurement, provincial tax rates (SRB, PRA, BRA, KPRA), QR code verification, and PDF invoice generation.
 
 ---
 
-## Project Structure
+## Directory Structure
 
 ```text
-d:\WORKING\FB DI\main\
-├── backend/
-│   ├── app/
-│   │   ├── core/              # Config, database, security, and auth dependencies
-│   │   ├── models/            # SQLAlchemy multi-tenant models (tenant, invoice, fbr, audit)
-│   │   ├── schemas/           # Pydantic v2 schemas for request validation & response
-│   │   ├── adapters/          # FBRAdapter interface, MockFBRAdapter, and AdapterFactory
-│   │   ├── services/          # PakistanTaxEngine, InvoiceService, FBRService, AuditService
-│   │   ├── api/               # FastAPI route controllers under /api/v1
-│   │   │   └── routes/        # auth, organization, branches, customers, products, invoices, fbr...
-│   │   ├── seed/              # Seed script with Pakistan demo company & reference data
-│   │   └── main.py            # FastAPI application entrypoint with lifespan DB initialization
-│   ├── tests/                 # Pytest test suite (tax engine, tenant isolation, mock adapter)
-│   ├── requirements.txt       # Python dependencies
-│   ├── run.py                 # Backend runner script (Uvicorn)
-│   └── Dockerfile
+├── admin-panel/             # PHP Laravel 11 Super Admin Dashboard
+│   ├── app/Controllers/     # Auth, Dashboard, Organizations, Licenses, Devices, FBR, Audit
+│   ├── app/Services/        # FastApiClient (Server-to-server authenticated bridge)
+│   ├── resources/views/     # Tailwind CSS Blade views & Activation Key Reveal Modal
+│   ├── tests/Feature/       # 100% Passing PHPUnit Feature Tests
+│   ├── Dockerfile           # Alpine Nginx + PHP-FPM + Supervisor production image
+│   └── composer.json
 │
-├── frontend/
-│   ├── src/
-│   │   ├── api/               # API clients for auth, invoices, fbr, and master data
-│   │   ├── context/           # AuthContext for JWT token session management
-│   │   ├── components/        # Shell, Sidebar, Header, StatusBadge, QRViewerModal, SubmissionModal
-│   │   ├── pages/             # Login, Dashboard, Invoices, CreateInvoice, FBR, Customers, Settings
-│   │   ├── types/             # TypeScript interfaces
-│   │   ├── App.tsx            # Main app router
-│   │   └── main.tsx           # React DOM root
-│   ├── package.json
-│   ├── vite.config.ts
-│   ├── tailwind.config.js
-│   └── Dockerfile
+├── backend/                 # Python FastAPI Central Cloud Backend
+│   ├── app/core/crypto.py   # AES-256-GCM encryption, secret masking, key generator
+│   ├── app/models/          # License, ActivationKey, DeviceInstallation, FBRCredential, Audit
+│   ├── app/services/        # LicenseService, PakistanTaxEngine, InvoiceService, FBRService
+│   ├── app/api/routes/      # activation.py (desktop client), admin.py (super admin panel)
+│   ├── tests/               # 55 Passing Pytest Unit & End-to-End Tests
+│   └── requirements.txt
 │
-├── docker-compose.yml         # Containerized Postgres, Redis, Backend, and Frontend
+├── frontend/                # React 18 + TypeScript Desktop Frontend
+│   ├── src/pages/           # ActivationPage, LoginPage, DashboardPage, InvoicesPage, FBR...
+│   ├── src/context/         # AuthContext (Activation, tokens, session restoration)
+│   ├── src/api/client.ts    # Configurable HTTPS base URL, token rotation interceptor
+│   ├── src/utils/           # fingerprint.ts (Hardware UUID & Windows OS entropy)
+│   └── src-tauri/           # Tauri v2 Windows Desktop Wrapper configuration & Rust lib
+│
+├── scripts/
+│   └── build_desktop.bat    # Windows desktop binary & installer builder
+│
+├── docker-compose.yml       # Production container orchestration
 └── README.md
 ```
 
 ---
 
-## Quickstart Guide
+## Getting Started & Local Development
 
-### 1. Backend Setup
-
-The backend uses Python 3.11+ and FastAPI.
+### 1. Central Backend (FastAPI)
 
 ```bash
-# Navigate to main directory
-cd "d:\WORKING\FB DI\main"
-
-# Activate the virtual environment
+# Activate virtual environment
 backend\venv\Scripts\activate
 
-# Run test suite to verify tax engine and tenant isolation
-powershell -Command "$env:PYTHONPATH='.'; backend\venv\Scripts\pytest.exe backend/tests"
+# Run database migrations / seed
+python -m backend.app.seed.seed_data
 
-# Run FastAPI backend server (listens on http://127.0.0.1:8000)
-backend\venv\Scripts\python.exe backend/run.py
+# Start FastAPI server
+python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
+API Documentation will be available at `http://127.0.0.1:8000/docs`.
 
-*Interactive Swagger API Documentation is available at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).*
-
-### 2. Frontend Setup
-
-The frontend uses Vite + React 18 + Tailwind CSS.
+### 2. Super Admin Panel (Laravel)
 
 ```bash
-cd "d:\WORKING\FB DI\main\frontend"
+cd admin-panel
 
-# Start the Vite development server (proxies /api to 127.0.0.1:8000)
-npm.cmd run dev
+# Install dependencies (if not cached)
+composer install
+
+# Migrate database
+php artisan migrate
+
+# Seed Super Admin credentials
+php artisan db:seed
+
+# Start Laravel development server
+php artisan serve --port 8080
+```
+- Admin Panel URL: `http://127.0.0.1:8080`
+- Default Super Admin: `superadmin@fbrinvoicecloud.com`
+- Default Password: `SuperAdmin@Secure2026!`
+
+### 3. Desktop Application (React / Tauri)
+
+```bash
+cd frontend
+
+# Install npm dependencies
+npm install
+
+# Start development server
+npm run dev
+
+# Or build production desktop package
+npm run build
 ```
 
-*Frontend is accessible at [http://localhost:5173](http://localhost:5173).*
+---
+
+## Verifying the Test Suites
+
+Both the backend and administrative frontend include complete automated test suites:
+
+### FastAPI Backend Tests (55 Tests — 100% Pass)
+```powershell
+backend\venv\Scripts\python.exe -m pytest
+```
+Covers:
+- `test_licensing_and_activation.py`: AES-256-GCM encryption, one-time secret generation, replay prevention, device limits, token rotation, license revocation, and full E2E desktop activation to invoice generation.
+- `test_e2e_full_system.py`: Multi-tenant fiscal engine, 18% GST calculations, PDF invoices, signed downloads, QR codes.
+- `test_fbr_adapters.py`: All 6 FBR submission scenarios (Valid, Error, Rejection, Timeout, Pending, Recovery).
+- `test_tenant_isolation.py`: Cross-tenant database partition security.
+
+### Laravel Super Admin Tests (7 Tests — 100% Pass)
+```powershell
+$env:PATH = "e:\tools\php;$env:PATH"
+e:\tools\php\php.exe artisan test
+```
+Covers:
+- Guest redirection & route protection
+- Super Admin authentication & credential validation
+- FastApiClient mocked KPI rendering & service integration
+- Organizations registry data display
 
 ---
 
-## Demo Credentials & Seed Data
+## Production Deployment with Docker Compose
 
-The database is pre-seeded with Pakistani distribution company master data:
+To deploy all central services using Docker:
 
-| Role | Email | Password | Organization |
-| :--- | :--- | :--- | :--- |
-| **Organization Admin** | `admin@abcdistribution.com` | `Admin@123` | ABC Distribution Pvt. Ltd. (NTN: 1234567-8) |
-| **Invoice Operator** | `operator@abcdistribution.com` | `Operator@123` | ABC Distribution Pvt. Ltd. |
+```bash
+docker-compose up -d --build
+```
 
-*(The Sign In screen includes one-click autofill buttons for these credentials).*
-
-### Pre-loaded Master Data:
-- **Customers**:
-  - `XYZ Traders` (Lahore, Punjab - NTN: `9876543-2`, STRN: `3277876199999`)
-  - `Metro Supplies` (Karachi, Sindh - NTN: `5432109-8`, STRN: `3277876188888`)
-  - `Sindh Wholesale Mart` (Hyderabad, Sindh - NTN: `6543210-7`)
-- **Products**:
-  - `POS-TERM-01` - Commercial POS Terminal (HS: `8471.30.10`, PKR 45,000, 18% GST)
-  - `ROLL-THM-50` - Thermal Receipt Paper Rolls Box of 50 (HS: `4811.90.00`, PKR 3,500, 18% GST)
-  - `SCN-2D-IND` - Industrial Barcode Scanner 2D (HS: `8471.60.20`, PKR 12,500, 18% GST)
-  - `CASH-DRW-HD` - Electronic Cash Drawer Heavy Duty (HS: `8303.00.00`, PKR 8,500, 18% GST)
+Services started:
+- `fbr_backend`: FastAPI running on port 8000
+- `fbr_admin_panel`: Nginx + PHP-FPM running on port 8080
+- `fbr_postgres`: PostgreSQL 16 database running on port 5432
+- `fbr_redis`: Redis 7 cache and job broker running on port 6379
 
 ---
 
-## Testing Mock FBR Scenarios
+## Step-by-Step Operator Workflow
 
-When creating or submitting an invoice:
-1. **Valid Submission**: Normal transmission creates a valid FBR invoice number and digitally signed verification QR code.
-2. **Simulate Timeout**: Enter reference number `ERR-TIMEOUT` on the invoice. Submission returns a retryable 504 status and queues for retry. Click **Retry** in the Submission Center to test exponential recovery.
-3. **Simulate Rejection**: Enter reference number `ERR-REJ`. Simulates duplicate reference rejection by FBR ledger.
-4. **QR Verification**: Click the **QR Code** button on any valid invoice to view the fiscal barcode representation generated in real time.
+1. **Log in to Super Admin**: Navigate to `http://localhost:8080` and log in with your administrative credentials.
+2. **Register Customer Organization**: Go to **Organizations** &rarr; **New Organization**. Fill in the company's NTN, legal name, province, and authorized terminal count.
+3. **Configure FBR Credentials**: Select FBR environment (Demo, Sandbox, or Production) and configure POS ID and authentication tokens (securely encrypted with AES-256-GCM).
+4. **Copy Activation Secret**: The platform generates and reveals a one-time key (e.g. `ACT-3X9K-8F2Q-11MZ-77PA`). Securely copy and deliver this key to the customer.
+5. **Customer Desktop Launch**: The customer opens the Windows desktop app, enters the activation key and workstation terminal name, and clicks **Activate**.
+6. **Automatic Verification**: The backend validates the secret, locks the hardware fingerprint, issues a permanent license token, and immediately displays the customer's live invoicing dashboard.

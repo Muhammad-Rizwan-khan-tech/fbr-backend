@@ -33,9 +33,28 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:postgrespassword@postgres:5432/fbr_invoice_cloud
       - SECRET_KEY=fbr-cloud-super-secret-key-production-change
+      - ADMIN_API_KEY=dev-admin-secret-key-change-in-production
       - FBR_DEFAULT_MODE=DEMO
     ports:
       - "8000:8000"
+
+  admin-panel:
+    build:
+      context: ./admin-panel
+      dockerfile: Dockerfile
+    container_name: fbr_admin_panel
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      - APP_NAME=FBR Invoice Cloud Super Admin
+      - APP_ENV=production
+      - APP_DEBUG=false
+      - APP_URL=http://localhost:8080
+      - FASTAPI_URL=http://backend:8000
+      - FASTAPI_ADMIN_KEY=dev-admin-secret-key-change-in-production
+    ports:
+      - "8080:80"
 
   frontend:
     build:

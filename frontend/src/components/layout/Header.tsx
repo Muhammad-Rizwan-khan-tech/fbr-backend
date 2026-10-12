@@ -1,5 +1,5 @@
 import React from 'react';
-import { LogOut, User as UserIcon, ShieldCheck } from 'lucide-react';
+import { LogOut, User as UserIcon, ShieldCheck, Key } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
 interface HeaderProps {
@@ -7,15 +7,22 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ onNewInvoiceClick }) => {
-  const { user, logout } = useAuth();
+  const { user, license, logout } = useAuth();
 
   return (
     <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8 sticky top-0 z-20">
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
         <div className="flex items-center gap-2 bg-emerald-50 text-emerald-800 text-xs px-3 py-1 rounded-full font-medium border border-emerald-200">
           <ShieldCheck className="w-4 h-4 text-emerald-600" />
-          <span>FBR Gateway: <strong>DEMO MODE ACTIVE</strong></span>
+          <span>FBR Gateway: <strong>{license?.fbr_mode || 'DEMO'} MODE ACTIVE</strong></span>
         </div>
+
+        {license?.license_number && (
+          <div className="hidden md:flex items-center gap-1.5 bg-sky-50 text-sky-800 text-xs px-3 py-1 rounded-full font-medium border border-sky-200">
+            <Key className="w-3.5 h-3.5 text-sky-600" />
+            <span>Permanent License: <strong className="font-mono">{license.license_number}</strong></span>
+          </div>
+        )}
       </div>
 
       <div className="flex items-center gap-4">
