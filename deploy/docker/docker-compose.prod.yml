@@ -1,0 +1,205 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fbr_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-fbr_invoice_cloud_prod}
+      POSTGRES_USER: ${POSTGRES_USER:-fbr_app_prod}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Database password required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../../scripts/backup_postgres.sh:/usr/local/bin/backup_postgres.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-fbr_app_prod} -d ${POSTGRES_DB:-fbr_invoice_cloud_prod}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - fbr_internal_net
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+
+  redis:
+    image: redis:7-alpine
+    container_name: fbr_redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD:?Redis password required}
+      --appendonly yes
+      --maxmemory 1024mb
+      --maxmemory-policy noeviction
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - fbr_internal_net
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1.5G
+
+  backend:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.backend
+    container_name: fbr_backend
+    restart: unless-stopped
+    env_file:
+      - ../../.env.production
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-fbr_app_prod}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-fbr_invoice_cloud_prod}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD}@redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD}@redis:6379/2
+      - QUEUE_BACKEND=celery
+      - ENVIRONMENT=production
+    volumes:
+      - storage_data:/app/storage_data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/api/v1/health/live || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    networks:
+      - fbr_internal_net
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.worker
+    container_name: fbr_worker
+    restart: unless-stopped
+    env_file:
+      - ../../.env.production
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-fbr_app_prod}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-fbr_invoice_cloud_prod}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD}@redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD}@redis:6379/2
+      - QUEUE_BACKEND=celery
+      - ENVIRONMENT=production
+    volumes:
+      - storage_data:/app/storage_data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - fbr_internal_net
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+
+  frontend:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.frontend
+    container_name: fbr_frontend
+    restart: unless-stopped
+    networks:
+      - fbr_internal_net
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  backup_cron:
+    image: postgres:16-alpine
+    container_name: fbr_backup_cron
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB:-fbr_invoice_cloud_prod}
+      PGUSER: ${POSTGRES_USER:-fbr_app_prod}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      BACKUP_OFFSITE_BUCKET: ${BACKUP_OFFSITE_BUCKET:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-ap-southeast-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:-}
+    volumes:
+      - backups_data:/backups
+      - ../../scripts/backup_postgres.sh:/usr/local/bin/backup_postgres.sh:ro
+      - ../../scripts/replicate_backup_cloud.py:/scripts/replicate_backup_cloud.py:ro
+      - ../cron/fbr-backup.cron:/etc/crontabs/root:ro
+    command: >
+      sh -c "apk add --no-cache python3 py3-pip && crond -f -l 2"
+    networks:
+      - fbr_internal_net
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: fbr_edge_proxy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ssl_certs:/etc/nginx/ssl:ro
+      - certbot_challenge:/var/www/certbot:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - fbr_internal_net
+      - fbr_public_net
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+volumes:
+  postgres_data:
+  redis_data:
+  storage_data:
+  backups_data:
+  ssl_certs:
+  certbot_challenge:
+
+networks:
+  fbr_internal_net:
+    driver: bridge
+  fbr_public_net:
+    driver: bridge

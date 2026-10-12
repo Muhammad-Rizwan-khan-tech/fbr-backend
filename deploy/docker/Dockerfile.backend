@@ -1,0 +1,48 @@
+# ==============================================================================
+# FBR Invoice Cloud - Production Backend Dockerfile (Multi-stage)
+# ==============================================================================
+FROM python:3.11-slim as builder
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# --- Runtime Stage ---
+FROM python:3.11-slim as runner
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy installed Python packages from builder
+COPY --from=builder /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
+ENV PYTHONPATH=/app
+
+# Copy application source code
+COPY backend /app/backend
+
+# Create non-root user for security compliance
+RUN groupadd -r fbruser && useradd -r -g fbruser -d /app fbruser && \
+    mkdir -p /app/storage_data && \
+    chown -R fbruser:fbruser /app
+
+USER fbruser
+
+EXPOSE 8000
+
+# Healthcheck for container orchestrators
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:8000/api/v1/health/live || exit 1
+
+# Launch with production Gunicorn + Uvicorn worker threads
+CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--proxy-headers", "--forwarded-allow-ips", "*"]

@@ -1,0 +1,42 @@
+# ==============================================================================
+# FBR Invoice Cloud - Production Celery Worker Dockerfile
+# ==============================================================================
+FROM python:3.11-slim as builder
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# --- Runtime Stage ---
+FROM python:3.11-slim as runner
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
+ENV PYTHONPATH=/app
+
+COPY backend /app/backend
+
+RUN groupadd -r fbruser && useradd -r -g fbruser -d /app fbruser && \
+    mkdir -p /app/storage_data && \
+    chown -R fbruser:fbruser /app
+
+USER fbruser
+
+# Healthcheck checking Celery worker process
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+  CMD python -c "from backend.app.workers.celery_app import celery_app; inspect = celery_app.control.inspect(); assert inspect.ping() is not None" || exit 1
+
+CMD ["celery", "-A", "backend.app.workers.celery_app.celery_app", "worker", "--loglevel=INFO", "-Q", "fbr_submission,pdf_generation,reports,notifications,maintenance", "-c", "4"]

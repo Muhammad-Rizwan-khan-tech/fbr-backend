@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FBR Invoice Cloud — Developer & ERP Integration Portal</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    pre code { font-family: 'Fira Code', 'Cascadia Code', Consolas, monospace; font-size: 0.875rem; }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col font-sans">
+  <!-- Top Navigation -->
+  <header class="border-b border-slate-800 bg-slate-950/80 backdrop-blur sticky top-0 z-50 px-6 py-4 flex items-center justify-between">
+    <div class="flex items-center space-x-3">
+      <div class="w-9 h-9 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-lg border border-emerald-500/30">
+        FBR
+      </div>
+      <div>
+        <h1 class="text-lg font-semibold text-white tracking-tight">FBR Invoice Cloud</h1>
+        <p class="text-xs text-slate-400">Developer & ERP Integration Guide (SRO 581 / PRAL v1.1)</p>
+      </div>
+    </div>
+    <div class="flex items-center space-x-4">
+      <a href="/docs" target="_blank" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded border border-slate-700 transition">
+        Swagger UI
+      </a>
+      <a href="/openapi.json" target="_blank" class="text-xs bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 px-3 py-1.5 rounded border border-emerald-500/40 transition">
+        Download OpenAPI JSON
+      </a>
+      <a href="/" class="text-xs text-slate-400 hover:text-white transition">
+        Back to App &rarr;
+      </a>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <div class="bg-gradient-to-b from-slate-950 to-slate-900 border-b border-slate-800 px-8 py-10">
+    <div class="max-w-5xl mx-auto">
+      <div class="inline-flex items-center space-x-2 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 rounded-full text-emerald-400 text-xs font-medium mb-4">
+        <span>Production Developer API</span>
+        <span>•</span>
+        <span>HMAC-SHA256 Webhooks</span>
+        <span>•</span>
+        <span>PRAL Digital Invoicing v1.1</span>
+      </div>
+      <h2 class="text-3xl font-extrabold text-white tracking-tight">ERP Integration & Developer Portal</h2>
+      <p class="text-slate-400 mt-2 max-w-3xl text-sm leading-relaxed">
+        Connect your enterprise systems (SAP S/4HANA, Oracle ERP Cloud, Odoo, or bespoke Point-of-Sale systems) to 
+        FBR Invoice Cloud using our high-throughput REST API. Ingest invoices, receive instant fiscal stamps, and subscribe to signed webhooks.
+      </p>
+    </div>
+  </div>
+
+  <!-- Content Container -->
+  <main class="max-w-5xl mx-auto px-6 py-8 flex-1 w-full space-y-12">
+    <!-- 1. Authentication -->
+    <section class="space-y-4">
+      <div class="flex items-center space-x-2">
+        <span class="w-6 h-6 rounded-full bg-blue-500/20 text-blue-400 flex items-center justify-center text-xs font-bold">1</span>
+        <h3 class="text-xl font-bold text-white">API Authentication & Headers</h3>
+      </div>
+      <p class="text-sm text-slate-400">
+        Every request to the Developer API must include your cryptographically hashed API Key in the <code>X-API-Key</code> request header.
+      </p>
+      <div class="bg-slate-950 border border-slate-800 rounded-lg p-4 font-mono text-xs text-emerald-400">
+        <div>X-API-Key: fbr_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</div>
+        <div class="text-slate-400">Content-Type: application/json</div>
+        <div class="text-slate-400">Idempotency-Key: &lt;optional-unique-uuid-for-replay-prevention&gt;</div>
+      </div>
+    </section>
+
+    <!-- 2. Invoice Ingestion Endpoint -->
+    <section class="space-y-4">
+      <div class="flex items-center space-x-2">
+        <span class="w-6 h-6 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs font-bold">2</span>
+        <h3 class="text-xl font-bold text-white">Invoice Ingestion: POST /api/v1/external/invoices</h3>
+      </div>
+      <p class="text-sm text-slate-400">
+        Ingest a digital tax invoice from your ERP. The tax engine automatically performs deterministic PRAL tax math, 
+        persists the invoice, and asynchronously queues it for official FBR fiscal registration.
+      </p>
+
+      <!-- Code Tabs Navigation -->
+      <div class="border border-slate-800 rounded-lg overflow-hidden bg-slate-950">
+        <div class="flex border-b border-slate-800 bg-slate-900/60 overflow-x-auto text-xs">
+          <button onclick="switchTab('curl')" id="tab-btn-curl" class="px-4 py-2.5 font-medium text-emerald-400 border-b-2 border-emerald-400">cURL</button>
+          <button onclick="switchTab('python')" id="tab-btn-python" class="px-4 py-2.5 font-medium text-slate-400 hover:text-white">Python</button>
+          <button onclick="switchTab('nodejs')" id="tab-btn-nodejs" class="px-4 py-2.5 font-medium text-slate-400 hover:text-white">Node.js</button>
+          <button onclick="switchTab('sap')" id="tab-btn-sap" class="px-4 py-2.5 font-medium text-slate-400 hover:text-white">SAP (ABAP)</button>
+          <button onclick="switchTab('oracle')" id="tab-btn-oracle" class="px-4 py-2.5 font-medium text-slate-400 hover:text-white">Oracle PL/SQL</button>
+          <button onclick="switchTab('odoo')" id="tab-btn-odoo" class="px-4 py-2.5 font-medium text-slate-400 hover:text-white">Odoo</button>
+          <button onclick="switchTab('csharp')" id="tab-btn-csharp" class="px-4 py-2.5 font-medium text-slate-400 hover:text-white">C# (.NET)</button>
+        </div>
+
+        <!-- Code Snippets -->
+        <div id="code-curl" class="p-4 overflow-x-auto">
+          <pre><code class="language-bash">curl -X POST "https://fbr-invoice.company.com/api/v1/external/invoices" \
+  -H "X-API-Key: fbr_live_xxxxxxxxxxxxxxxxxxxxxx" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: ERP-DOC-98234-A" \
+  -d '{
+    "branch_code": "KHI-01",
+    "external_reference_id": "SAP-INV-98234",
+    "buyer": {
+      "name": "Standard Chartered Pakistan",
+      "ntn": "1122334-5",
+      "buyer_type": "REGISTERED_BUSINESS",
+      "address": "I.I. Chundrigar Road",
+      "city": "Karachi",
+      "province": "Sindh"
+    },
+    "items": [
+      {
+        "item_name": "Enterprise Database License",
+        "hs_code": "8523.49.20",
+        "uom": "NUM",
+        "quantity": 2,
+        "unit_price": 50000.00,
+        "discount": 5000.00,
+        "tax_rate": 18.00,
+        "sale_type": "SERVICES"
+      }
+    ],
+    "payment_mode": "BANK_TRANSFER",
+    "auto_submit_fbr": true
+  }'</code></pre>
+        </div>
+
+        <div id="code-python" class="p-4 overflow-x-auto hidden">
+          <pre><code class="language-python">import requests
+import uuid
+
+API_KEY = "fbr_live_xxxxxxxxxxxxxxxxxxxxxx"
+BASE_URL = "https://fbr-invoice.company.com"
+
+payload = {
+    "branch_code": "KHI-01",
+    "external_reference_id": f"ERP-REF-{uuid.uuid4().hex[:8]}",
+    "buyer": {
+        "name": "Standard Chartered Pakistan",
+        "ntn": "1122334-5",
+        "buyer_type": "REGISTERED_BUSINESS",
+        "address": "I.I. Chundrigar Road",
+        "city": "Karachi",
+        "province": "Sindh"
+    },
+    "items": [
+        {
+            "item_name": "Enterprise Database License",
+            "hs_code": "8523.49.20",
+            "uom": "NUM",
+            "quantity": 2,
+            "unit_price": 50000.00,
+            "discount": 5000.00,
+            "tax_rate": 18.00,
+            "sale_type": "SERVICES"
+        }
+    ],
+    "payment_mode": "BANK_TRANSFER",
+    "auto_submit_fbr": True
+}
+
+headers = {
+    "X-API-Key": API_KEY,
+    "Content-Type": "application/json",
+    "Idempotency-Key": payload["external_reference_id"]
+}
+
+response = requests.post(f"{BASE_URL}/api/v1/external/invoices", json=payload, headers=headers)
+data = response.json()
+print("Invoice ID:", data["invoice_id"])
+print("Grand Total PKR:", data["grand_total"])
+print("FBR Job Status:", data["fbr_status"])</code></pre>
+        </div>
+
+        <div id="code-nodejs" class="p-4 overflow-x-auto hidden">
+          <pre><code class="language-javascript">const axios = require('axios');
+
+async function submitInvoice() {
+  const apiKey = 'fbr_live_xxxxxxxxxxxxxxxxxxxxxx';
+  const url = 'https://fbr-invoice.company.com/api/v1/external/invoices';
+
+  const invoice = {
+    branch_code: 'KHI-01',
+    external_reference_id: 'NODE-POS-10029',
+    buyer: {
+      name: 'Standard Chartered Pakistan',
+      ntn: '1122334-5',
+      buyer_type: 'REGISTERED_BUSINESS',
+      address: 'I.I. Chundrigar Road',
+      city: 'Karachi',
+      province: 'Sindh'
+    },
+    items: [
+      {
+        item_name: 'Enterprise Database License',
+        hs_code: '8523.49.20',
+        uom: 'NUM',
+        quantity: 2,
+        unit_price: 50000.00,
+        discount: 5000.00,
+        tax_rate: 18.00,
+        sale_type: 'SERVICES'
+      }
+    ],
+    payment_mode: 'BANK_TRANSFER',
+    auto_submit_fbr: true
+  };
+
+  const response = await axios.post(url, invoice, {
+    headers: {
+      'X-API-Key': apiKey,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  console.log('FBR Invoice Response:', response.data);
+}
+
+submitInvoice();</code></pre>
+        </div>
+
+        <div id="code-sap" class="p-4 overflow-x-auto hidden">
+          <pre><code class="language-abap">" SAP S/4HANA / ECC - ABAP HTTP Client Pattern
+DATA: lo_http_client TYPE REF TO if_http_client,
+      lv_json_body   TYPE string,
+      lv_response    TYPE string.
+
+cl_http_client=>create_by_url(
+  EXPORTING
+    url    = 'https://fbr-invoice.company.com/api/v1/external/invoices'
+  IMPORTING
+    client = lo_http_client ).
+
+lo_http_client->request->set_method( 'POST' ).
+lo_http_client->request->set_header_field( name = 'X-API-Key' value = 'fbr_live_xxxxxxxxxxxxxxxx' ).
+lo_http_client->request->set_header_field( name = 'Content-Type' value = 'application/json' ).
+
+lv_json_body = '{"branch_code":"KHI-01","external_reference_id":"SAP-9912",...}'.
+lo_http_client->request->set_cdata( lv_json_body ).
+
+lo_http_client->send( ).
+lo_http_client->receive( ).
+lv_response = lo_http_client->response->get_cdata( ).</code></pre>
+        </div>
+
+        <div id="code-oracle" class="p-4 overflow-x-auto hidden">
+          <pre><code class="language-sql">-- Oracle ERP Cloud / Autonomous PL-SQL REST Invocation
+DECLARE
+  l_url      VARCHAR2(256) := 'https://fbr-invoice.company.com/api/v1/external/invoices';
+  l_body     CLOB := '{"branch_code":"KHI-01","external_reference_id":"ORA-1002",...}';
+  l_response CLOB;
+BEGIN
+  apex_web_service.g_request_headers.delete();
+  apex_web_service.set_request_header('X-API-Key', 'fbr_live_xxxxxxxxxxxxxxxx');
+  apex_web_service.set_request_header('Content-Type', 'application/json');
+
+  l_response := apex_web_service.make_rest_request(
+    p_url         => l_url,
+    p_http_method => 'POST',
+    p_body        => l_body
+  );
+  dbms_output.put_line(l_response);
+END;</code></pre>
+        </div>
+
+        <div id="code-odoo" class="p-4 overflow-x-auto hidden">
+          <pre><code class="language-python"># Odoo 16/17 Invoicing Module Action
+import requests
+from odoo import models, api
+
+class AccountMove(models.Model):
+    _inherit = 'account.move'
+
+    def action_fbr_digital_invoice_submit(self):
+        for rec in self:
+            api_key = self.env['ir.config_parameter'].sudo().get_param('fbr.api_key')
+            base_url = "https://fbr-invoice.company.com/api/v1/external/invoices"
+            
+            payload = {
+                "branch_code": "KHI-01",
+                "external_reference_id": rec.name,
+                "buyer": {
+                    "name": rec.partner_id.name,
+                    "ntn": rec.partner_id.vat or "",
+                    "buyer_type": "REGISTERED_BUSINESS"
+                },
+                "items": [{
+                    "item_name": l.name,
+                    "hs_code": l.product_id.hs_code or "9900.00.00",
+                    "uom": "NUM",
+                    "quantity": l.quantity,
+                    "unit_price": l.price_unit,
+                    "tax_rate": 18.0
+                } for l in rec.invoice_line_ids],
+                "auto_submit_fbr": True
+            }
+            resp = requests.post(base_url, json=payload, headers={"X-API-Key": api_key})
+            rec.message_post(body=f"FBR Cloud Response: {resp.text}")</code></pre>
+        </div>
+
+        <div id="code-csharp" class="p-4 overflow-x-auto hidden">
+          <pre><code class="language-csharp">// .NET 8 / C# POS Client
+using System.Net.Http.Json;
+
+using var client = new HttpClient();
+client.DefaultRequestHeaders.Add("X-API-Key", "fbr_live_xxxxxxxxxxxxxxxxxxxxxx");
+
+var payload = new {
+    branch_code = "KHI-01",
+    external_reference_id = "POS-NET-9912",
+    buyer = new {
+        name = "Standard Chartered Pakistan",
+        ntn = "1122334-5",
+        buyer_type = "REGISTERED_BUSINESS"
+    },
+    items = new[] {
+        new {
+            item_name = "Enterprise License",
+            hs_code = "8523.49.20",
+            uom = "NUM",
+            quantity = 2.0,
+            unit_price = 50000.0,
+            tax_rate = 18.0
+        }
+    },
+    auto_submit_fbr = true
+};
+
+var response = await client.PostAsJsonAsync("https://fbr-invoice.company.com/api/v1/external/invoices", payload);
+var result = await response.Content.ReadAsStringAsync();
+Console.WriteLine(result);</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. Webhook Signature Verification Guide -->
+    <section class="space-y-4">
+      <div class="flex items-center space-x-2">
+        <span class="w-6 h-6 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-xs font-bold">3</span>
+        <h3 class="text-xl font-bold text-white">Webhook Signature Verification (HMAC-SHA256)</h3>
+      </div>
+      <p class="text-sm text-slate-400 leading-relaxed">
+        When an invoice is validated or rejected by the FBR gateway, our worker pushes an asynchronous HTTP POST to your registered webhook URL. 
+        Each payload is cryptographically signed using your secret key (<code>whsec_...</code>).
+      </p>
+
+      <div class="bg-slate-950 border border-slate-800 rounded-lg p-4 space-y-2 text-xs">
+        <p class="text-slate-300 font-semibold">Incoming Request Headers:</p>
+        <div class="font-mono text-slate-400">
+          <div><span class="text-amber-400">X-FBR-Signature:</span> sha256=4f53cdae6...</div>
+          <div><span class="text-amber-400">X-FBR-Timestamp:</span> 1791515291</div>
+        </div>
+      </div>
+
+      <div class="bg-slate-950 border border-slate-800 rounded-lg p-4">
+        <p class="text-xs text-slate-400 mb-2 font-medium">Python Verification Example:</p>
+        <pre><code class="language-python">import hmac
+import hashlib
+import time
+
+def verify_fbr_webhook(raw_payload_bytes: bytes, signature_header: str, timestamp_header: str, secret: str) -> bool:
+    # 1. Prevent replay attacks: ensure timestamp is within 300 seconds (5 min)
+    if abs(time.time() - int(timestamp_header)) > 300:
+        return False
+
+    # 2. Recompute expected HMAC-SHA256
+    signed_payload = f"{timestamp_header}.".encode("utf-8") + raw_payload_bytes
+    expected_sig = hmac.new(secret.encode("utf-8"), signed_payload, hashlib.sha256).hexdigest()
+
+    # 3. Constant-time comparison
+    received_sig = signature_header.replace("sha256=", "")
+    return hmac.compare_digest(expected_sig, received_sig)</code></pre>
+      </div>
+    </section>
+
+    <!-- 4. Error Codes & SLA Reference -->
+    <section class="space-y-4">
+      <div class="flex items-center space-x-2">
+        <span class="w-6 h-6 rounded-full bg-purple-500/20 text-purple-400 flex items-center justify-center text-xs font-bold">4</span>
+        <h3 class="text-xl font-bold text-white">FBR Error Codes & Recovery SLA</h3>
+      </div>
+      <div class="overflow-x-auto border border-slate-800 rounded-lg">
+        <table class="w-full text-left text-xs text-slate-300">
+          <thead class="bg-slate-950 text-slate-400 border-b border-slate-800 uppercase text-[10px] tracking-wider font-semibold">
+            <tr>
+              <th class="p-3">Error Code</th>
+              <th class="p-3">Description</th>
+              <th class="p-3">Classification</th>
+              <th class="p-3">Retry Strategy</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800/60 bg-slate-900/40">
+            <tr>
+              <td class="p-3 font-mono text-amber-400">NET-504 / NET-CONN</td>
+              <td class="p-3">PRAL Central Gateway Timeout / Connectivity Interruption</td>
+              <td class="p-3 text-emerald-400 font-medium">Transient</td>
+              <td class="p-3">Auto exponential backoff (up to 4 attempts: 5m, 15m, 30m)</td>
+            </tr>
+            <tr>
+              <td class="p-3 font-mono text-red-400">VAL-104</td>
+              <td class="p-3">Inactive Buyer NTN or Missing PCT Code</td>
+              <td class="p-3 text-red-400 font-medium">Permanent Rejection</td>
+              <td class="p-3">Correction required in ERP master data before resubmission</td>
+            </tr>
+            <tr>
+              <td class="p-3 font-mono text-red-400">REJ-204</td>
+              <td class="p-3">Duplicate Invoice Reference in FBR Central Ledger</td>
+              <td class="p-3 text-red-400 font-medium">Permanent Rejection</td>
+              <td class="p-3">Idempotency violation; verify existing accepted invoice ref</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer class="border-t border-slate-800 py-6 text-center text-xs text-slate-500 bg-slate-950">
+    <p>&copy; 2026 FBR Invoice Cloud. Compliant with Federal Board of Revenue Digital Invoicing Standards.</p>
+  </footer>
+
+  <script>
+    hljs.highlightAll();
+
+    function switchTab(lang) {
+      const tabs = ['curl', 'python', 'nodejs', 'sap', 'oracle', 'odoo', 'csharp'];
+      tabs.forEach(t => {
+        const block = document.getElementById(`code-${t}`);
+        const btn = document.getElementById(`tab-btn-${t}`);
+        if (t === lang) {
+          block.classList.remove('hidden');
+          btn.classList.add('text-emerald-400', 'border-b-2', 'border-emerald-400');
+          btn.classList.remove('text-slate-400');
+        } else {
+          block.classList.add('hidden');
+          btn.classList.remove('text-emerald-400', 'border-b-2', 'border-emerald-400');
+          btn.classList.add('text-slate-400');
+        }
+      });
+    }
+  </script>
+</body>
+</html>

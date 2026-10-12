@@ -1,0 +1,12 @@
+[Unit]
+Description=FBR Invoice Cloud Daily PostgreSQL Backup Service
+After=network.target postgresql.service docker.service
+
+[Service]
+Type=oneshot
+User=fbruser
+WorkingDirectory=/app
+EnvironmentFile=/app/.env.production
+ExecStart=/app/scripts/backup_postgres.sh /app/backups
+StandardOutput=journal
+StandardError=journal

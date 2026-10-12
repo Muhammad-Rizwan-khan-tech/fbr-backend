@@ -1,0 +1,6 @@
+# ==============================================================================
+# FBR Invoice Cloud — Automated Daily Backup Cron Job
+# Schedule: Every day at 02:00 UTC
+# ==============================================================================
+# m h  dom mon dow   command
+0 2 * * * /usr/local/bin/backup_postgres.sh /backups && python3 /scripts/replicate_backup_cloud.py --backup-dir /backups >> /var/log/fbr_backup.log 2>&1
