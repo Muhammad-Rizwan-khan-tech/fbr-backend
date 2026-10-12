@@ -12,8 +12,10 @@ from backend.app.models.reference import HSCode, UOM, TaxRate, SaleType, TaxProf
 from backend.app.models.customer import Customer
 from backend.app.models.product import Product
 from backend.app.models.invoice import Invoice, InvoiceItem, InvoiceStatus, FBRSubmissionStatus
-from backend.app.models.fbr import FBRSubmission, FBRSubmissionAttempt
 from backend.app.models.note import CreditNote, DebitNote, NoteStatus
+from backend.app.models.license import License, LicenseStatus, ActivationKey, ActivationKeyStatus
+from backend.app.models.fbr_credential import FBRCredential, FBRConnectionStatus
+from backend.app.core.crypto import hash_activation_secret
 from backend.app.services.tax_engine import PakistanTaxEngine
 
 
@@ -190,6 +192,48 @@ def seed_database(db: Session = None):
             is_active=True
         )
         db.add_all([admin_user, operator_user])
+        db.flush()
+
+        # Seed Permanent License (No subscription expiry)
+        demo_license = License(
+            organization_id=org.id,
+            license_number="LIC-ABCD-PERM-DEMO01",
+            license_type="PERMANENT",
+            status=LicenseStatus.ACTIVE.value,
+            max_devices=5,
+            issued_at=datetime.now(timezone.utc),
+            issued_by="SUPER_ADMIN",
+        )
+        db.add(demo_license)
+        db.flush()
+
+        # Seed Known Demo Activation Key
+        demo_key_secret = "ACT-ABCD-DEMO-2026-KEY1"
+        demo_act_key = ActivationKey(
+            license_id=demo_license.id,
+            organization_id=org.id,
+            key_hash=hash_activation_secret(demo_key_secret),
+            key_prefix="ACT-ABCD-DEMO",
+            status=ActivationKeyStatus.PENDING.value,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=365),
+            created_by="SUPER_ADMIN",
+        )
+        db.add(demo_act_key)
+
+        # Seed FBR Credential Record (Encrypted at rest)
+        demo_fbr_cred = FBRCredential(
+            organization_id=org.id,
+            environment="DEMO",
+            provider="MOCK",
+            fbr_pos_id="POS-KHI-01",
+            status=FBRConnectionStatus.HEALTHY.value,
+            is_active=True,
+        )
+        demo_fbr_cred.set_credentials(
+            api_key="mock_fbr_api_key_demo_2026",
+            auth_token="mock_bearer_token_demo_2026",
+        )
+        db.add(demo_fbr_cred)
         db.flush()
 
         # 10. Customers

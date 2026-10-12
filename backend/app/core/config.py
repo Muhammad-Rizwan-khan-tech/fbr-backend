@@ -23,7 +23,12 @@ class Settings(BaseSettings):
     SECRET_KEY: str = _DEV_SECRET
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
-    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000"
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+    ADMIN_API_KEY: str = "dev-admin-secret-key-change-in-production"
+    FBR_CREDENTIAL_ENCRYPTION_KEY: str = ""
+    ACTIVATION_KEY_EXPIRY_DAYS: int = 30
+    MAX_DEVICES_PER_ORGANIZATION: int = 5
+    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000,tauri://localhost,https://tauri.localhost"
     RATE_LIMIT_ENABLED: bool = True
     LOGIN_RATE_LIMIT_PER_MINUTE: int = 20
     SUBMIT_RATE_LIMIT_PER_MINUTE: int = 60

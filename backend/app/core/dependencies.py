@@ -1,7 +1,8 @@
 from typing import Optional
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
+from backend.app.core.config import settings
 from backend.app.core.database import get_db
 from backend.app.core.security import decode_access_token
 from backend.app.models.user import User, UserRole
@@ -60,6 +61,36 @@ def require_roles(*allowed_roles: str):
             )
         return current_user
     return role_checker
+
+
+def require_admin_access(
+    request: Request,
+    db: Session = Depends(get_db)
+) -> str:
+    """Authenticates requests from the Laravel Super Admin Panel or a Super Admin user.
+    
+    Accepts:
+    1. 'X-Admin-Key' server-to-server header matching settings.ADMIN_API_KEY
+    2. Or Bearer token of a SUPER_ADMIN user account
+    """
+    admin_key_header = request.headers.get("X-Admin-Key")
+    if admin_key_header and settings.ADMIN_API_KEY:
+        from hmac import compare_digest
+        if compare_digest(admin_key_header.strip(), settings.ADMIN_API_KEY.strip()):
+            return request.headers.get("X-Admin-User") or "LARAVEL_SUPER_ADMIN"
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid X-Admin-Key")
+
+    # Fallback to standard Bearer token
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1]
+        payload = decode_access_token(token)
+        if payload and payload.get("role") == UserRole.SUPER_ADMIN.value:
+            user = db.query(User).filter(User.id == payload.get("sub")).first()
+            if user and user.is_active:
+                return user.email
+
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Super Admin authorization required (provide X-Admin-Key or Super Admin Bearer token)")
 
 
 # ---------------------------------------------------------------------------------

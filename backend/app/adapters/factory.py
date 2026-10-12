@@ -57,6 +57,55 @@ class FBRAdapterFactory:
         return MockFBRAdapter(forced_scenario=forced_scenario)
 
     @classmethod
+    def get_adapter_for_tenant(
+        cls,
+        credential: Optional[Any] = None,
+        tenant_settings: Optional[Any] = None,
+        forced_scenario: str = "AUTO",
+    ) -> FBRAdapter:
+        """Resolves adapter using organization-specific decrypted FBRCredential or settings."""
+        if credential is not None:
+            provider = getattr(credential, "provider", None) or getattr(credential, "environment", "MOCK")
+            pos_id = getattr(credential, "fbr_pos_id", None) or getattr(settings, "FBR_DEFAULT_POS_ID", "10001")
+            base_url = getattr(credential, "base_url", None) or settings.FBR_API_URL or None
+            
+            # Decrypt secrets if method exists
+            api_key = credential.get_api_key() if hasattr(credential, "get_api_key") else None
+            auth_token = credential.get_auth_token() if hasattr(credential, "get_auth_token") else None
+            client_id = credential.get_client_id() if hasattr(credential, "get_client_id") else None
+            client_secret = credential.get_client_secret() if hasattr(credential, "get_client_secret") else None
+            
+            token = auth_token or api_key
+
+            prov_upper = provider.upper()
+            if prov_upper in ("DEMO", "MOCK"):
+                return MockFBRAdapter(forced_scenario=forced_scenario)
+            elif prov_upper == "SANDBOX":
+                return SandboxFBRAdapter(
+                    base_url=base_url,
+                    bearer_token=token,
+                    pos_id=pos_id,
+                    forced_scenario=forced_scenario,
+                )
+            elif prov_upper == "PRODUCTION":
+                return ProductionFBRAdapter(
+                    base_url=base_url,
+                    bearer_token=token,
+                    pos_id=pos_id,
+                    client_id=client_id or settings.FBR_CLIENT_ID,
+                    client_secret=client_secret or settings.FBR_CLIENT_SECRET,
+                )
+            elif prov_upper in ("LICENSED_INTEGRATOR", "INTEGRATOR", "PRAL"):
+                return LicensedIntegratorAdapter(
+                    base_url=base_url,
+                    api_key=token,
+                    pos_id=pos_id,
+                )
+        
+        mode = getattr(tenant_settings, "fbr_mode", "DEMO") if tenant_settings else "DEMO"
+        return cls.get_adapter(mode=mode, tenant_settings=tenant_settings, forced_scenario=forced_scenario)
+
+    @classmethod
     def test_connection(
         cls,
         mode: str = "DEMO",

@@ -18,6 +18,11 @@ from backend.app.models.document import Document, DocumentType, BackgroundJob, B
 from backend.app.models.notification import Notification, NotificationDelivery
 from backend.app.models.api_key import ApiKey
 from backend.app.models.webhook import WebhookEndpoint, WebhookDelivery
+from backend.app.models.license import License, LicenseStatus, ActivationKey, ActivationKeyStatus
+from backend.app.models.device import DeviceInstallation, DeviceStatus
+from backend.app.models.session import DeviceSession
+from backend.app.models.fbr_credential import FBRCredential, FBRConnectionStatus
+from backend.app.models.admin_audit import AdminAuditLog
 
 __all__ = [
     "Base", "TimestampMixin", "TenantMixin",
@@ -33,5 +38,8 @@ __all__ = [
     "Document", "DocumentType", "BackgroundJob", "BackgroundJobStatus",
     "Notification", "NotificationDelivery",
     "ApiKey", "WebhookEndpoint", "WebhookDelivery",
+    "License", "LicenseStatus", "ActivationKey", "ActivationKeyStatus",
+    "DeviceInstallation", "DeviceStatus", "DeviceSession",
+    "FBRCredential", "FBRConnectionStatus", "AdminAuditLog",
 ]
 

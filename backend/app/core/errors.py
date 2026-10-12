@@ -15,11 +15,13 @@ class AppError(Exception):
     default_message = "An unexpected error occurred."
 
     def __init__(self, message: Optional[str] = None, *, details: Optional[Dict[str, Any]] = None,
-                 status_code: Optional[int] = None):
+                 status_code: Optional[int] = None, code: Optional[str] = None):
         self.message = message or self.default_message
         self.details = details or {}
         if status_code is not None:
             self.status_code = status_code
+        if code is not None:
+            self.code = code
         super().__init__(self.message)
 
 

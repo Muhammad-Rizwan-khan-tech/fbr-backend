@@ -11,6 +11,7 @@ from backend.app.core.errors import ConflictError, NotFoundError, AppError
 from backend.app.core.context import execution_context
 from backend.app.core.config import settings as app_settings
 from backend.app.models.tenant import OrganizationSettings
+from backend.app.models.fbr_credential import FBRCredential
 from backend.app.models.invoice import Invoice, InvoiceStatus, FBRSubmissionStatus
 from backend.app.models.submission_job import (
     InvoiceSubmissionJob,
@@ -156,8 +157,15 @@ class FBRService:
             OrganizationSettings.organization_id == invoice.tenant_id
         ).first()
         fbr_mode = settings.fbr_mode if settings else "DEMO"
+        cred = db.query(FBRCredential).filter(
+            FBRCredential.organization_id == invoice.tenant_id
+        ).first()
 
-        adapter = FBRAdapterFactory.get_adapter(mode=fbr_mode, forced_scenario=forced_scenario)
+        adapter = FBRAdapterFactory.get_adapter_for_tenant(
+            credential=cred,
+            tenant_settings=settings,
+            forced_scenario=forced_scenario
+        )
         payload = cls._build_fbr_payload(invoice, db=db)
         
         start_time = time.time()
@@ -256,7 +264,8 @@ class FBRService:
             raise HTTPException(status_code=404, detail="Associated invoice not found")
 
         # For retry, we clear any transient failure scenario and perform standard submission
-        adapter = FBRAdapterFactory.get_adapter(mode=submission.environment, forced_scenario="VALID")
+        cred = db.query(FBRCredential).filter(FBRCredential.organization_id == invoice.tenant_id).first()
+        adapter = FBRAdapterFactory.get_adapter_for_tenant(credential=cred, forced_scenario="VALID")
         payload = cls._build_fbr_payload(invoice, db=db)
 
         start_time = time.time()
