@@ -1,8 +1,8 @@
 import re
 import uuid
-from datetime import datetime
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from datetime import datetime, timezone
+from typing import List, Optional, Dict, Any
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 
@@ -31,6 +31,11 @@ from backend.app.schemas.admin import (
     AdminStatsResponse,
     AdminAuditLogItem,
     AdminDeviceResponse,
+    AdminCreateClientRequest,
+    AdminUpdateClientRequest,
+    AdminUpdateClientFBRTokenRequest,
+    AdminClientListItem,
+    AdminCreateClientResponse,
 )
 
 router = APIRouter(prefix="/admin", tags=["Super Admin Platform API"])
@@ -176,6 +181,8 @@ def create_organization(
         province=req.province.strip(),
         city=city,
         address=req.address.strip(),
+        business_activity=getattr(req, "business_activity", None) or "MANUFACTURER",
+        business_sector=getattr(req, "business_sector", None),
     )
     db.add(taxpayer)
 
@@ -538,6 +545,13 @@ def set_organization_fbr_credentials(
         auth_token=req.auth_token,
         cert_passphrase=req.cert_passphrase,
     )
+    if req.token_expires_at is not None:
+        cred.token_expires_at = req.token_expires_at
+    if req.production_ready is not None:
+        cred.production_ready = req.production_ready
+    if req.sandbox_tested is not None:
+        cred.sandbox_tested = req.sandbox_tested
+    cred.token_rotated_at = datetime.now(timezone.utc)
     cred.status = FBRConnectionStatus.UNTESTED.value
 
     # Update organization setting mode if matching
@@ -635,3 +649,519 @@ def list_admin_audit_logs(
         "limit": limit,
         "offset": offset,
     }
+
+
+# In-memory idempotency cache for client creation requests
+_client_idempotency_cache: Dict[str, Dict[str, Any]] = {}
+
+
+@router.post("/clients", response_model=AdminCreateClientResponse)
+def create_client(
+    req: AdminCreateClientRequest,
+    request: Request,
+    admin: str = Depends(require_admin_access),
+    db: Session = Depends(get_db),
+):
+    """Creates a customer client with exactly the 3 required fields:
+    Company Name, Username, and FBR API Token.
+    Persists organization, taxpayer profile, client user, encrypted FBR credentials,
+    permanent license, and generates an unhashed activation key for one-time display.
+    Supports idempotency via X-Idempotency-Key or Idempotency-Key header.
+    """
+    idempotency_key = request.headers.get("X-Idempotency-Key") or request.headers.get("Idempotency-Key")
+    if idempotency_key and idempotency_key in _client_idempotency_cache:
+        cached = _client_idempotency_cache[idempotency_key]
+        return cached
+
+    company_name = req.company_name.strip()
+    username = req.username.strip().lower()
+    fbr_token = req.fbr_api_token.strip()
+
+    if not company_name:
+        raise HTTPException(status_code=400, detail="Company Name is required")
+    if not username:
+        raise HTTPException(status_code=400, detail="Username is required")
+    if not fbr_token:
+        raise HTTPException(status_code=400, detail="FBR API Token is required")
+
+    # Check username uniqueness across all users
+    existing_user = db.query(User).filter(
+        (User.username == username) | (User.email == f"{username}@client.local")
+    ).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Username '{username}' already exists. Please choose another username."
+        )
+
+    # Generate unique slug for the organization
+    base_slug = _slugify(company_name)
+    slug = base_slug
+    idx = 1
+    while db.query(Organization).filter(Organization.slug == slug).first():
+        slug = f"{base_slug}-{idx}"
+        idx += 1
+
+    # 1. Create Organization
+    org = Organization(
+        name=company_name,
+        slug=slug,
+        status=OrgStatus.ACTIVE.value,
+        is_active=True,
+    )
+    db.add(org)
+    db.flush()
+
+    # 2. Create Taxpayer Profile & Default Branch
+    taxpayer = Taxpayer(
+        tenant_id=org.id,
+        legal_name=company_name,
+        trade_name=company_name,
+        ntn="1000000-0",
+        province="Punjab",
+        city="Lahore",
+        address="Pakistan",
+        business_activity="MANUFACTURER",
+    )
+    db.add(taxpayer)
+
+    branch = Branch(
+        tenant_id=org.id,
+        branch_name="Head Office",
+        branch_code="HO-01",
+        address="Pakistan",
+        city="Lahore",
+        province="Punjab",
+        is_main=True,
+        is_active=True,
+    )
+    db.add(branch)
+
+    settings_obj = OrganizationSettings(
+        organization_id=org.id,
+        invoice_prefix="INV",
+        fbr_mode="PRODUCTION",
+    )
+    db.add(settings_obj)
+
+    # 3. Create Client User with secure bootstrap password
+    import secrets
+    user = User(
+        tenant_id=org.id,
+        username=username,
+        email=f"{username}@{org.slug}.local",
+        full_name=company_name,
+        hashed_password=get_password_hash(secrets.token_urlsafe(32)),
+        role=UserRole.ORG_ADMIN.value,
+        is_active=True,
+        is_verified=True,
+    )
+    db.add(user)
+    db.flush()
+
+    # 4. Store FBR API Token Encrypted via AES-256-GCM
+    cred = FBRCredential(
+        organization_id=org.id,
+        environment="PRODUCTION",
+        provider="PRAL",
+        status="CONFIGURED_NOT_VERIFIED",
+    )
+    cred.set_credentials(
+        auth_token=fbr_token,
+        api_key=fbr_token,
+    )
+    db.add(cred)
+
+    # 5. Create Permanent License & One-time Activation Secret
+    license_obj, raw_activation_secret = LicenseService.create_permanent_license_for_org(
+        db=db,
+        organization=org,
+        max_devices=5,
+        issued_by=admin,
+    )
+
+    audit = AdminAuditLog(
+        admin_identity=admin,
+        action="CLIENT_CREATED",
+        target_type="CLIENT",
+        target_id=org.id,
+        details=f"Created client '{company_name}' (username: {username}) with permanent license {license_obj.license_number}",
+    )
+    db.add(audit)
+    db.commit()
+
+    response_data = {
+        "success": True,
+        "organization_id": org.id,
+        "company_name": org.name,
+        "username": username,
+        "activation_key": raw_activation_secret,
+        "license_id": license_obj.id,
+        "license_number": license_obj.license_number,
+        "license_status": "ACTIVE",
+        "activation_status": "Not Activated",
+        "fbr_status": "Configured — Not Verified",
+        "message": "Client created successfully. Reveal the activation key to the customer once.",
+    }
+
+    if idempotency_key:
+        _client_idempotency_cache[idempotency_key] = response_data
+
+    return response_data
+
+
+@router.get("/clients")
+def list_clients(
+    search: Optional[str] = Query(None, description="Search by company name or username"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    admin: str = Depends(require_admin_access),
+    db: Session = Depends(get_db),
+):
+    """Lists all customer clients with Company Name, Username, FBR Connection Status,
+    License Status, and Activation Status.
+    """
+    query = db.query(Organization).order_by(Organization.created_at.desc())
+
+    if search:
+        term = f"%{search.strip()}%"
+        query = query.outerjoin(User, User.tenant_id == Organization.id).filter(
+            (Organization.name.ilike(term)) | (User.username.ilike(term))
+        )
+
+    orgs = query.offset(offset).limit(limit).all()
+    items = []
+    for o in orgs:
+        # Client user
+        client_user = db.query(User).filter(User.tenant_id == o.id).first()
+        username = client_user.username if client_user and client_user.username else (
+            client_user.email.split("@")[0] if client_user else "N/A"
+        )
+
+        # License
+        lic = db.query(License).filter(License.organization_id == o.id).order_by(License.created_at.desc()).first()
+        lic_status = lic.status if lic else "NONE"
+
+        # Device / Activation status
+        active_devices = db.query(func.count(DeviceInstallation.id)).filter(
+            DeviceInstallation.organization_id == o.id,
+            DeviceInstallation.status == DeviceStatus.ACTIVE.value,
+        ).scalar() or 0
+
+        if active_devices > 0:
+            activation_status = "Activated"
+        else:
+            revoked_devices = db.query(func.count(DeviceInstallation.id)).filter(
+                DeviceInstallation.organization_id == o.id,
+                DeviceInstallation.status == DeviceStatus.REVOKED.value,
+            ).scalar() or 0
+            if revoked_devices > 0:
+                activation_status = "Revoked"
+            else:
+                activation_status = "Not Activated"
+
+        # FBR Connection status
+        cred = db.query(FBRCredential).filter(FBRCredential.organization_id == o.id).first()
+        if not cred or not cred.is_active or not (cred.encrypted_auth_token or cred.encrypted_api_key):
+            fbr_status = "Not Configured"
+        elif cred.status in ("VERIFIED", "HEALTHY") and cred.last_success_at:
+            fbr_status = "Verified"
+        elif cred.status == "AUTH_FAILED":
+            fbr_status = "Authentication Failed"
+        elif cred.status == "CONNECTION_UNAVAILABLE":
+            fbr_status = "Connection Unavailable"
+        else:
+            fbr_status = "Configured — Not Verified"
+
+        items.append({
+            "id": o.id,
+            "company_name": o.name,
+            "username": username,
+            "fbr_status": fbr_status,
+            "license_status": lic_status,
+            "activation_status": activation_status,
+            "license_id": lic.id if lic else None,
+            "license_number": lic.license_number if lic else None,
+            "active_devices_count": active_devices,
+            "created_at": o.created_at.isoformat(),
+        })
+
+    return {"total": len(items), "items": items}
+
+
+@router.get("/clients/{client_id}")
+def get_client(
+    client_id: str,
+    admin: str = Depends(require_admin_access),
+    db: Session = Depends(get_db),
+):
+    """Retrieves full details for a client, including license, device, and connection standing."""
+    org = db.query(Organization).filter(Organization.id == client_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Client organization not found")
+
+    client_user = db.query(User).filter(User.tenant_id == org.id).first()
+    username = client_user.username if client_user and client_user.username else (
+        client_user.email.split("@")[0] if client_user else "N/A"
+    )
+
+    lic = db.query(License).filter(License.organization_id == org.id).order_by(License.created_at.desc()).first()
+    cred = db.query(FBRCredential).filter(FBRCredential.organization_id == org.id).first()
+
+    active_devices = db.query(func.count(DeviceInstallation.id)).filter(
+        DeviceInstallation.organization_id == org.id,
+        DeviceInstallation.status == DeviceStatus.ACTIVE.value,
+    ).scalar() or 0
+
+    if active_devices > 0:
+        activation_status = "Activated"
+    else:
+        revoked_devices = db.query(func.count(DeviceInstallation.id)).filter(
+            DeviceInstallation.organization_id == org.id,
+            DeviceInstallation.status == DeviceStatus.REVOKED.value,
+        ).scalar() or 0
+        activation_status = "Revoked" if revoked_devices > 0 else "Not Activated"
+
+    if not cred or not cred.is_active or not (cred.get_auth_token() or cred.get_api_key()):
+        fbr_status = "Not Configured"
+    elif cred.status in ("VERIFIED", "HEALTHY") and cred.last_success_at:
+        fbr_status = "Verified"
+    elif cred.status == "AUTH_FAILED":
+        fbr_status = "Authentication Failed"
+    elif cred.status == "CONNECTION_UNAVAILABLE":
+        fbr_status = "Connection Unavailable"
+    else:
+        fbr_status = "Configured — Not Verified"
+
+    pending_key = db.query(ActivationKey).filter(
+        ActivationKey.organization_id == org.id,
+        ActivationKey.status == ActivationKeyStatus.PENDING.value
+    ).first()
+
+    devices = db.query(DeviceInstallation).filter(DeviceInstallation.organization_id == org.id).all()
+
+    return {
+        "id": org.id,
+        "company_name": org.name,
+        "username": username,
+        "email": client_user.email if client_user else None,
+        "status": org.status,
+        "fbr_status": fbr_status,
+        "license": {
+            "id": lic.id if lic else None,
+            "license_number": lic.license_number if lic else None,
+            "license_type": lic.license_type if lic else "PERMANENT",
+            "status": lic.status if lic else "NONE",
+            "issued_at": lic.issued_at.isoformat() if lic else None,
+            "revoked_at": lic.revoked_at.isoformat() if lic and lic.revoked_at else None,
+            "revocation_reason": lic.revocation_reason if lic else None,
+        } if lic else None,
+        "activation_status": activation_status,
+        "pending_activation_key_prefix": pending_key.key_prefix if pending_key else None,
+        "active_devices_count": active_devices,
+        "devices": [
+            {
+                "id": d.id,
+                "device_name": d.device_name,
+                "os_info": d.os_info,
+                "status": d.status,
+                "activated_at": d.activated_at.isoformat(),
+                "last_seen_at": d.last_seen_at.isoformat(),
+            }
+            for d in devices
+        ],
+        "created_at": org.created_at.isoformat(),
+    }
+
+
+@router.patch("/clients/{client_id}")
+def update_client(
+    client_id: str,
+    req: AdminUpdateClientRequest,
+    admin: str = Depends(require_admin_access),
+    db: Session = Depends(get_db),
+):
+    """Updates client company name and/or username."""
+    org = db.query(Organization).filter(Organization.id == client_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Client organization not found")
+
+    client_user = db.query(User).filter(User.tenant_id == org.id).first()
+
+    if req.username:
+        new_username = req.username.strip().lower()
+        if client_user and client_user.username != new_username:
+            existing = db.query(User).filter(
+                User.username == new_username,
+                User.id != client_user.id,
+            ).first()
+            if existing:
+                raise HTTPException(status_code=409, detail=f"Username '{new_username}' is already taken.")
+            client_user.username = new_username
+            client_user.email = f"{new_username}@{org.slug}.local"
+
+    if req.company_name:
+        new_name = req.company_name.strip()
+        org.name = new_name
+        if client_user:
+            client_user.full_name = new_name
+        if org.taxpayer:
+            org.taxpayer.legal_name = new_name
+            org.taxpayer.trade_name = new_name
+
+    audit = AdminAuditLog(
+        admin_identity=admin,
+        action="CLIENT_UPDATED",
+        target_type="CLIENT",
+        target_id=org.id,
+        details=f"Updated client {org.name}",
+    )
+    db.add(audit)
+    db.commit()
+
+    return {"success": True, "message": "Client updated successfully"}
+
+
+@router.post("/clients/{client_id}/activation/reissue")
+def reissue_client_activation_key(
+    client_id: str,
+    req: Optional[AdminReissueKeyRequest] = None,
+    admin: str = Depends(require_admin_access),
+    db: Session = Depends(get_db),
+):
+    """Reissues a new one-time activation secret for the client's permanent license."""
+    reason = req.reason if req else "Administrative re-issuance from Admin panel"
+    license_obj, raw_secret = LicenseService.reissue_activation_key(
+        db=db,
+        organization_id=client_id,
+        admin_identity=admin,
+        reason=reason,
+    )
+    return {
+        "success": True,
+        "license_id": license_obj.id,
+        "license_number": license_obj.license_number,
+        "activation_key": raw_secret,
+        "one_time_activation_secret": raw_secret,
+        "message": "New activation key generated. Reveal to customer once and store securely.",
+    }
+
+
+@router.post("/clients/{client_id}/license/revoke")
+def revoke_client_license(
+    client_id: str,
+    req: Optional[AdminDeviceActionRequest] = None,
+    admin: str = Depends(require_admin_access),
+    db: Session = Depends(get_db),
+):
+    """Revokes a customer's permanent license and terminates all active device sessions."""
+    lic = db.query(License).filter(
+        License.organization_id == client_id,
+        License.status == LicenseStatus.ACTIVE.value,
+    ).first()
+    if not lic:
+        # Check if already revoked
+        lic_any = db.query(License).filter(License.organization_id == client_id).first()
+        if lic_any and lic_any.status == LicenseStatus.REVOKED.value:
+            return {"success": True, "license_id": lic_any.id, "status": "REVOKED"}
+        raise HTTPException(status_code=404, detail="Active license not found for client")
+
+    lic.status = LicenseStatus.REVOKED.value
+    lic.revoked_at = now_utc()
+    lic.revoked_by = admin
+    lic.revocation_reason = (req.reason if req else None) or "Revoked by Administrator"
+
+    # Revoke sessions for this organization
+    db.query(DeviceSession).filter(DeviceSession.organization_id == client_id).update({"is_revoked": True})
+
+    audit = AdminAuditLog(
+        admin_identity=admin,
+        action="CLIENT_LICENSE_REVOKED",
+        target_type="LICENSE",
+        target_id=lic.id,
+        details=f"Revoked permanent license {lic.license_number} for client {client_id}",
+    )
+    db.add(audit)
+    db.commit()
+
+    return {"success": True, "license_id": lic.id, "status": lic.status}
+
+
+@router.post("/clients/{client_id}/license/reactivate")
+def reactivate_client_license(
+    client_id: str,
+    admin: str = Depends(require_admin_access),
+    db: Session = Depends(get_db),
+):
+    """Reactivates a revoked permanent license for a client."""
+    lic = db.query(License).filter(License.organization_id == client_id).order_by(License.created_at.desc()).first()
+    if not lic:
+        raise HTTPException(status_code=404, detail="No license found for client")
+
+    lic.status = LicenseStatus.ACTIVE.value
+    lic.revoked_at = None
+    lic.revoked_by = None
+    lic.revocation_reason = None
+
+    audit = AdminAuditLog(
+        admin_identity=admin,
+        action="CLIENT_LICENSE_REACTIVATED",
+        target_type="LICENSE",
+        target_id=lic.id,
+        details=f"Reactivated permanent license {lic.license_number} for client {client_id}",
+    )
+    db.add(audit)
+    db.commit()
+
+    return {"success": True, "license_id": lic.id, "status": lic.status}
+
+
+@router.put("/clients/{client_id}/fbr-connection")
+def update_client_fbr_token(
+    client_id: str,
+    req: AdminUpdateClientFBRTokenRequest,
+    admin: str = Depends(require_admin_access),
+    db: Session = Depends(get_db),
+):
+    """Securely updates and re-encrypts the PRAL FBR API token for a client organization."""
+    fbr_token = req.fbr_api_token.strip()
+    if not fbr_token:
+        raise HTTPException(status_code=400, detail="FBR API Token cannot be empty")
+
+    org = db.query(Organization).filter(Organization.id == client_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Client organization not found")
+
+    cred = db.query(FBRCredential).filter(FBRCredential.organization_id == client_id).first()
+    if not cred:
+        cred = FBRCredential(
+            organization_id=client_id,
+            environment="PRODUCTION",
+            provider="PRAL",
+        )
+        db.add(cred)
+
+    cred.set_credentials(
+        auth_token=fbr_token,
+        api_key=fbr_token,
+    )
+    cred.status = "CONFIGURED_NOT_VERIFIED"
+    cred.token_rotated_at = now_utc()
+    cred.last_error = None
+
+    audit = AdminAuditLog(
+        admin_identity=admin,
+        action="CLIENT_FBR_TOKEN_UPDATED",
+        target_type="CLIENT",
+        target_id=client_id,
+        details=f"FBR API token updated for client {org.name}",
+    )
+    db.add(audit)
+    db.commit()
+
+    return {
+        "success": True,
+        "message": "FBR API token updated and stored encrypted at rest.",
+        "fbr_status": "Configured — Not Verified",
+    }
+

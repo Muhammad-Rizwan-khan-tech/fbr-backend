@@ -36,6 +36,7 @@ class UserResponse(BaseModel):
     id: str
     tenant_id: str
     email: str
+    username: Optional[str] = None
     full_name: str
     role: str
     phone: Optional[str] = None

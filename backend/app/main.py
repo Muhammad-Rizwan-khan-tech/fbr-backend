@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse, HTMLResponse
 
 from backend.app.core.config import settings
 from backend.app.core.context import execution_context
-from backend.app.core.database import Base, engine, SessionLocal
+from backend.app.core.database import Base, engine, SessionLocal, ensure_schema_columns
 from backend.app.core.errors import AppError
 from backend.app.core.logging import setup_logging
 from backend.app.monitoring.metrics import metrics_collector, record_http_request
@@ -16,9 +16,11 @@ from backend.app.api.api_v1 import api_router
 from backend.app.api.routes.health import router as health_router, healthcheck
 from backend.app.core.middleware import SecurityHeadersMiddleware
 from backend.app.seed.seed_data import seed_database
+import backend.app.models  # noqa: F401 - register all ORM models
 
 # Configure production JSON structured logging
 setup_logging(level=settings.LOG_LEVEL)
+ensure_schema_columns(engine)
 
 
 @asynccontextmanager
@@ -27,7 +29,7 @@ async def lifespan(app: FastAPI):
     settings.validate_for_runtime()
 
     # Startup: Ensure database schema is created and seeded with reference data
-    Base.metadata.create_all(bind=engine)
+    ensure_schema_columns(engine)
     try:
         db = SessionLocal()
         seed_database(db)
@@ -35,6 +37,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Warning during initial DB seeding: {e}")
     yield
+
     # Shutdown logic (if any)
 
 

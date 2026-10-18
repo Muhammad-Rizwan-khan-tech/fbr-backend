@@ -34,6 +34,11 @@ class FBRCredential(Base, TimestampMixin):
     status = Column(String(50), default=FBRConnectionStatus.UNTESTED.value, nullable=False)
     last_tested_at = Column(DateTime(timezone=True), nullable=True)
     last_success_at = Column(DateTime(timezone=True), nullable=True)
+    last_failed_at = Column(DateTime(timezone=True), nullable=True)
+    token_expires_at = Column(DateTime(timezone=True), nullable=True)  # PRAL tokens valid for 5 years
+    token_rotated_at = Column(DateTime(timezone=True), nullable=True)
+    production_ready = Column(Boolean, default=False, nullable=False)
+    sandbox_tested = Column(Boolean, default=False, nullable=False)
     last_error = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
 
@@ -98,6 +103,11 @@ class FBRCredential(Base, TimestampMixin):
             "status": self.status,
             "last_tested_at": self.last_tested_at.isoformat() if self.last_tested_at else None,
             "last_success_at": self.last_success_at.isoformat() if self.last_success_at else None,
+            "last_failed_at": self.last_failed_at.isoformat() if self.last_failed_at else None,
+            "token_expires_at": self.token_expires_at.isoformat() if self.token_expires_at else None,
+            "token_rotated_at": self.token_rotated_at.isoformat() if self.token_rotated_at else None,
+            "production_ready": self.production_ready,
+            "sandbox_tested": self.sandbox_tested,
             "last_error": self.last_error,
             "is_active": self.is_active,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,

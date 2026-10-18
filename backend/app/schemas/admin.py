@@ -23,6 +23,8 @@ class AdminCreateOrgRequest(BaseModel):
     fbr_client_id: Optional[str] = None
     fbr_client_secret: Optional[str] = None
     fbr_auth_token: Optional[str] = None
+    business_activity: Optional[str] = Field("MANUFACTURER", description="MANUFACTURER | DISTRIBUTOR | WHOLESALER | EXPORTER | RETAILER | SERVICE_PROVIDER | OTHER")
+    business_sector: Optional[str] = None
 
 
 class AdminUpdateOrgRequest(BaseModel):
@@ -50,6 +52,9 @@ class AdminSetFBRCredentialsRequest(BaseModel):
     client_secret: Optional[str] = None
     auth_token: Optional[str] = None
     cert_passphrase: Optional[str] = None
+    token_expires_at: Optional[datetime] = None
+    production_ready: Optional[bool] = False
+    sandbox_tested: Optional[bool] = False
 
 
 class AdminReissueKeyRequest(BaseModel):
@@ -137,3 +142,47 @@ class AdminStatsResponse(BaseModel):
     submitted_invoices: int
     fbr_healthy_count: int
     fbr_failed_count: int
+
+
+# --- Simplified 3-Field Admin Client Management Schemas ---
+
+class AdminCreateClientRequest(BaseModel):
+    company_name: str = Field(..., min_length=2, max_length=255, description="Client legal / company name")
+    username: str = Field(..., min_length=3, max_length=50, description="Client unique username for desktop terminal")
+    fbr_api_token: str = Field(..., min_length=1, description="PRAL-issued FBR API authorization token")
+
+
+class AdminUpdateClientRequest(BaseModel):
+    company_name: Optional[str] = Field(None, min_length=2, max_length=255)
+    username: Optional[str] = Field(None, min_length=3, max_length=50)
+
+
+class AdminUpdateClientFBRTokenRequest(BaseModel):
+    fbr_api_token: str = Field(..., min_length=1, description="New PRAL-issued FBR API authorization token")
+
+
+class AdminClientListItem(BaseModel):
+    id: str
+    company_name: str
+    username: str
+    fbr_status: str
+    license_status: str
+    activation_status: str
+    license_id: Optional[str] = None
+    license_number: Optional[str] = None
+    created_at: str
+
+
+class AdminCreateClientResponse(BaseModel):
+    success: bool = True
+    organization_id: str
+    company_name: str
+    username: str
+    activation_key: str
+    license_id: str
+    license_number: str
+    license_status: str = "ACTIVE"
+    activation_status: str = "Not Activated"
+    fbr_status: str = "Configured — Not Verified"
+    message: str = "Client created successfully. Reveal the activation key to the customer once."
+

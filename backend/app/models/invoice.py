@@ -83,6 +83,7 @@ class Invoice(Base, TenantMixin):
     
     # References and Notes
     reference_number = Column(String(100), nullable=True)
+    scenario_id = Column(String(20), nullable=True)
     payment_terms = Column(String(100), nullable=True)
     notes = Column(Text, nullable=True)
     correlation_id = Column(String(50), nullable=True, index=True)  # traces request -> job -> worker -> FBR
@@ -110,17 +111,25 @@ class InvoiceItem(Base, TimestampMixin):
     hs_code = Column(String(20), nullable=False) # Pakistan HS code e.g. 8471.30.10
     
     quantity = Column(Numeric(12, 3), default=1.000, nullable=False)
-    uom = Column(String(20), default="NOS", nullable=False)
+    uom = Column(String(60), default="NOS", nullable=False)
     unit_price = Column(Numeric(14, 2), default=0.00, nullable=False)
     gross_amount = Column(Numeric(14, 2), default=0.00, nullable=False)
     discount = Column(Numeric(14, 2), default=0.00, nullable=False)
     taxable_amount = Column(Numeric(14, 2), default=0.00, nullable=False)
     
     tax_rate = Column(Numeric(5, 2), default=18.00, nullable=False) # standard 18%
+    rate_desc = Column(String(120), nullable=True) # exact PRAL ratE_DESC e.g. "18%", "Exempt", "18% along with..."
     tax_amount = Column(Numeric(14, 2), default=0.00, nullable=False)
+    fixed_notified_value_or_retail_price = Column(Numeric(14, 2), default=0.00, nullable=False)
+    sales_tax_withheld_at_source = Column(Numeric(14, 2), default=0.00, nullable=False)
+    extra_tax = Column(Numeric(14, 2), default=0.00, nullable=False)
+    further_tax = Column(Numeric(14, 2), default=0.00, nullable=False)
+    fed_payable = Column(Numeric(14, 2), default=0.00, nullable=False)
     line_total = Column(Numeric(14, 2), default=0.00, nullable=False)
     
-    sale_type = Column(String(50), default="STANDARD", nullable=False)
-    sro_reference = Column(String(100), nullable=True)
+    sale_type = Column(String(120), default="STANDARD", nullable=False)
+    sro_reference = Column(String(120), nullable=True)
+    sro_item_serial_no = Column(String(100), nullable=True)
 
     invoice = relationship("Invoice", back_populates="items")
+

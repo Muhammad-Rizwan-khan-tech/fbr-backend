@@ -41,8 +41,12 @@ class FBRSubmissionResponse(BaseModel):
 
 class FBRStatusResponse(BaseModel):
     is_connected: bool
+    connection_status: str = "NOT_CONFIGURED"  # NOT_CONFIGURED | CONFIGURED_NOT_VERIFIED | VERIFIED | AUTHENTICATION_FAILED | CONNECTION_UNAVAILABLE
     environment: str
     adapter: str
+    last_tested_at: Optional[datetime] = None
+    last_success_at: Optional[datetime] = None
+    last_error: Optional[str] = None
     last_successful_submission: Optional[datetime] = None
     pending_queue_count: int = 0
     failed_submissions_count: int = 0

@@ -50,6 +50,7 @@ def redeem_activation_key(
         "expires_in": result["expires_in"],
         "license": result["license"],
         "organization": result["organization"],
+        "user": result.get("user"),
         "device_id": result["device_id"],
     }
 
@@ -98,6 +99,7 @@ def get_current_principal_profile(
     return {
         "user": {
             "id": current_user.id,
+            "username": current_user.username or current_user.email,
             "email": current_user.email,
             "full_name": current_user.full_name,
             "role": current_user.role,
@@ -115,11 +117,11 @@ def get_current_principal_profile(
 
 @router.get("/license/status", response_model=LicenseStatusResponse)
 def get_license_status(
-    tenant: Organization = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """Validates the organization's permanent license status in real-time."""
-    return LicenseService.get_license_status(db, tenant.id)
+    return LicenseService.get_license_status(db, current_user.tenant_id)
 
 
 @router.get("/organizations/current")

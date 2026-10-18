@@ -23,6 +23,7 @@ from backend.app.models.device import DeviceInstallation, DeviceStatus
 from backend.app.models.session import DeviceSession
 from backend.app.models.fbr_credential import FBRCredential, FBRConnectionStatus
 from backend.app.models.admin_audit import AdminAuditLog
+from backend.app.models.pral_catalog import FBRReferenceCatalog, FBRReferenceSyncRun
 
 __all__ = [
     "Base", "TimestampMixin", "TenantMixin",
@@ -41,5 +42,6 @@ __all__ = [
     "License", "LicenseStatus", "ActivationKey", "ActivationKeyStatus",
     "DeviceInstallation", "DeviceStatus", "DeviceSession",
     "FBRCredential", "FBRConnectionStatus", "AdminAuditLog",
+    "FBRReferenceCatalog", "FBRReferenceSyncRun",
 ]
 

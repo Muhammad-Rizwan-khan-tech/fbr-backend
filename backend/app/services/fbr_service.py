@@ -31,8 +31,19 @@ class FBRService:
     def _build_fbr_payload(invoice: Invoice, db: Optional[Session] = None) -> dict:
         items_payload = []
         for itm in invoice.items:
-            rate_desc = f"{int(itm.tax_rate)}%" if float(itm.tax_rate).is_integer() else f"{float(itm.tax_rate)}%"
+            raw_rate_desc = getattr(itm, "rate_desc", None)
+            if raw_rate_desc and str(raw_rate_desc).strip():
+                rate_desc = str(raw_rate_desc).strip()
+            else:
+                rate_desc = f"{int(itm.tax_rate)}%" if float(itm.tax_rate).is_integer() else f"{float(itm.tax_rate)}%"
             sale_type_desc = "Goods at standard rate" if str(itm.sale_type).upper() == "STANDARD" else str(itm.sale_type)
+            fixed_val = float(getattr(itm, "fixed_notified_value_or_retail_price", 0.0) or 0.0)
+            withheld_val = float(getattr(itm, "sales_tax_withheld_at_source", 0.0) or 0.0)
+            extra_tax_val = float(getattr(itm, "extra_tax", 0.0) or 0.0)
+            further_tax_val = float(getattr(itm, "further_tax", 0.0) or 0.0)
+            fed_payable_val = float(getattr(itm, "fed_payable", 0.0) or 0.0)
+            sro_serial = getattr(itm, "sro_item_serial_no", None)
+
             items_payload.append({
                 "item_seq": itm.item_seq,
                 "item_code": itm.item_code,
@@ -54,12 +65,20 @@ class FBRService:
                 "salesTaxApplicable": float(itm.tax_amount),
                 "line_total": float(itm.line_total),
                 "totalValues": float(itm.line_total),
-                "fixedNotifiedValueOrRetailPrice": 0.0,
-                "salesTaxWithheldAtSource": 0.0,
+                "fixedNotifiedValueOrRetailPrice": fixed_val,
+                "salesTaxWithheldAtSource": withheld_val,
+                "extra_tax": extra_tax_val,
+                "extraTax": extra_tax_val,
+                "further_tax": further_tax_val,
+                "furtherTax": further_tax_val,
+                "fed_payable": fed_payable_val,
+                "fedPayable": fed_payable_val,
                 "sale_type": sale_type_desc,
                 "saleType": sale_type_desc,
                 "sro_reference": itm.sro_reference,
                 "sroScheduleNo": itm.sro_reference if itm.sro_reference else None,
+                "sro_item_serial_no": sro_serial,
+                "sroItemSerialNo": sro_serial if sro_serial else None,
             })
 
         seller_address = ""
@@ -95,8 +114,10 @@ class FBRService:
         is_debit = "DEBIT" in str(invoice.invoice_type).upper()
         official_inv_type = "Debit Note" if is_debit else "Sale Invoice"
         reg_type = "Registered" if str(invoice.buyer_registration_type).upper() in ("REGISTERED", "REGISTERED_BUSINESS") else "Unregistered"
-        buyer_ntn_cnic = invoice.buyer_ntn or invoice.buyer_cnic or ("1111111" if reg_type == "Unregistered" else "")
+        # PRAL DI API v1.12: If buyer has NTN or CNIC, use it; otherwise leave empty without fake placeholder
+        buyer_ntn_cnic = invoice.buyer_ntn or invoice.buyer_cnic or ""
         date_str = invoice.invoice_date.strftime("%Y-%m-%d") if invoice.invoice_date else datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        scen_id = getattr(invoice, "scenario_id", None)
 
         return {
             "invoice_number": invoice.invoice_number,
@@ -134,6 +155,8 @@ class FBRService:
             "grand_total": float(invoice.grand_total),
             "reference_number": invoice.reference_number,
             "invoiceRefNo": invoice.reference_number if is_debit else None,
+            "scenario_id": scen_id,
+            "scenarioId": scen_id,
             "notes": invoice.notes,
             "items": items_payload,
         }

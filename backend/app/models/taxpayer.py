@@ -17,6 +17,8 @@ class Taxpayer(Base, TimestampMixin):
     strn = Column(String(30), nullable=True, index=True) # Sales Tax Registration Number
     registration_type = Column(String(50), default="REGISTERED", nullable=False)
     business_type = Column(String(100), default="WHOLESALER", nullable=False)
+    business_activity = Column(String(100), default="WHOLESALER", nullable=False)  # MANUFACTURER, DISTRIBUTOR, WHOLESALER, EXPORTER, RETAILER, SERVICE_PROVIDER, OTHER
+    business_sector = Column(String(100), default="General Trading", nullable=True)
     
     # Address details
     address = Column(Text, nullable=False)

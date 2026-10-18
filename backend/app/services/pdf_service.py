@@ -118,9 +118,24 @@ class PDFInvoiceGenerator:
             textColor=colors.HexColor("#991B1B"),
             alignment=1 # Center
         ))
+        self.styles.add(ParagraphStyle(
+            name="InvLogoBadge",
+            fontName="Helvetica-Bold",
+            fontSize=7.5,
+            leading=9.5,
+            textColor=colors.white,
+        ))
+        self.styles.add(ParagraphStyle(
+            name="InvLogoBadgeRight",
+            fontName="Helvetica-Bold",
+            fontSize=7.5,
+            leading=9.5,
+            textColor=colors.HexColor("#A7F3D0"),
+            alignment=2 # Right
+        ))
 
-    def _build_qr_code(self, qr_text: str, size: float = 65) -> Drawing:
-        """Create a vector QR Code drawing from text string."""
+    def _build_qr_code(self, qr_text: str, size: float = 1.0 * inch) -> Drawing:
+        """Create a vector QR Code drawing (PRAL v1.12 Section 4: 1.0 x 1.0 inch / 72 pt)."""
         qr = QrCodeWidget(qr_text)
         bounds = qr.getBounds()
         w = bounds[2] - bounds[0]
@@ -141,6 +156,23 @@ class PDFInvoiceGenerator:
         )
 
         story = []
+
+        # 0. Official PRAL / FBR Digital Invoicing System Badge (PRAL v1.12 Section 4)
+        logo_badge_data = [[
+            Paragraph("🏛️ <b>FEDERAL BOARD OF REVENUE</b> &nbsp;|&nbsp; DIGITAL INVOICING SYSTEM (PRAL)", self.styles["InvLogoBadge"]),
+            Paragraph("<b>PRAL CERTIFIED E-INVOICE</b>", self.styles["InvLogoBadgeRight"])
+        ]]
+        logo_badge_table = Table(logo_badge_data, colWidths=[126 * mm, 60 * mm])
+        logo_badge_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#065F46")), # Emerald 800
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        story.append(logo_badge_table)
+        story.append(Spacer(1, 2 * mm))
 
         # 1. Provenance / Simulation Banner if DEMO or MOCK
         is_demo = bool(invoice.fbr_is_simulated or invoice.fbr_environment == "DEMO" or invoice.fbr_provider == "MOCK")
@@ -330,7 +362,7 @@ class PDFInvoiceGenerator:
                 f"FBR-POS|INV:{invoice.fbr_invoice_number or invoice.invoice_number}|"
                 f"NTN:{invoice.seller_ntn}|TOTAL:{invoice.grand_total}|TAX:{invoice.total_tax}"
             )
-        qr_drawing = self._build_qr_code(qr_payload, size=65)
+        qr_drawing = self._build_qr_code(qr_payload, size=1.0 * inch)
 
         summary_rows = [
             [Paragraph("Subtotal (Gross):", self.styles["InvTableCellBold"]), Paragraph(f"PKR {float(invoice.subtotal):,.2f}", self.styles["InvTableCellRight"])],
@@ -362,7 +394,7 @@ class PDFInvoiceGenerator:
         qr_text_note = (
             "<b>FBR Digital Verification</b><br/>"
             "<font size='6.5' color='#64748B'>"
-            "Scan QR to verify invoice authenticity against FBR e-Invoicing portal.<br/>"
+            "Scan QR (1.0\" x 1.0\") to verify authenticity against FBR e-Invoicing portal.<br/>"
             f"FBR Ref: {invoice.fbr_invoice_number or 'Pending'}<br/>"
             "Issued in accordance with Sales Tax Rules, 2006."
             "</font>"
@@ -375,7 +407,7 @@ class PDFInvoiceGenerator:
                 summary_table,
             ]
         ]
-        qr_block_table = Table(qr_block_data, colWidths=[26 * mm, 75 * mm, 85 * mm])
+        qr_block_table = Table(qr_block_data, colWidths=[28 * mm, 73 * mm, 85 * mm])
         qr_block_table.setStyle(TableStyle([
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("LEFTPADDING", (0, 0), (-1, -1), 2),
@@ -400,8 +432,27 @@ class PDFInvoiceGenerator:
         )
         story.append(footer_p)
 
+        # Enforce watermark unless official valid production invoice
+        is_valid_official = (
+            str(invoice.status).upper() in ("VALID", "ISSUED", "PAID")
+            and bool(invoice.fbr_invoice_number)
+            and not bool(invoice.fbr_is_simulated)
+            and str(invoice.fbr_environment).upper() == "PRODUCTION"
+            and str(invoice.fbr_status).upper() in ("VALID", "SUCCESS", "POSTED")
+        )
+
+        def _draw_watermark(canvas, document):
+            if not is_valid_official:
+                canvas.saveState()
+                canvas.setFont("Helvetica-Bold", 34)
+                canvas.setFillColor(colors.HexColor("#CBD5E1"), alpha=0.35)
+                canvas.translate(A4[0] / 2, A4[1] / 2)
+                canvas.rotate(45)
+                canvas.drawCentredString(0, 0, "SIMULATED / PRE-SUBMISSION DRAFT")
+                canvas.restoreState()
+
         # Build document
-        doc.build(story)
+        doc.build(story, onFirstPage=_draw_watermark, onLaterPages=_draw_watermark)
         pdf_bytes = buffer.getvalue()
         buffer.close()
         return pdf_bytes
@@ -429,6 +480,23 @@ class PDFInvoiceGenerator:
         is_demo = bool(getattr(note, "fbr_is_simulated", True) or getattr(note, "fbr_environment", "DEMO") == "DEMO")
 
         story = []
+
+        # 0. Official PRAL / FBR Digital Invoicing System Badge (PRAL v1.12 Section 4)
+        logo_badge_data = [[
+            Paragraph(f"🏛️ <b>FEDERAL BOARD OF REVENUE</b> &nbsp;|&nbsp; DIGITAL INVOICING SYSTEM (PRAL)", self.styles["InvLogoBadge"]),
+            Paragraph(f"<b>PRAL CERTIFIED {doc_title}</b>", self.styles["InvLogoBadgeRight"])
+        ]]
+        logo_badge_table = Table(logo_badge_data, colWidths=[120 * mm, 66 * mm])
+        logo_badge_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#065F46")), # Emerald 800
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        story.append(logo_badge_table)
+        story.append(Spacer(1, 2 * mm))
 
         # 1. Warning banner if DEMO
         if is_demo:
@@ -546,7 +614,7 @@ class PDFInvoiceGenerator:
 
         # 5. QR Code & FBR Status Block
         qr_data = getattr(note, "fbr_qr_data", None) or f"FBR-NOTE|NUM:{note_num}|ORIG:{note.original_invoice_number}|TOT:{note.grand_total}|TAX:{note.tax_amount}"
-        qr_drawing = self._build_qr_code(qr_data, size=65)
+        qr_drawing = self._build_qr_code(qr_data, size=1.0 * inch)
 
         fbr_note_text = (
             f"<b>FBR Digital Fiscal Registration</b><br/>"
@@ -571,7 +639,25 @@ class PDFInvoiceGenerator:
             self.styles["InvSmall"]
         ))
 
-        doc.build(story)
+        note_is_valid = (
+            str(note.status).upper() in ("VALID", "ISSUED", "POSTED")
+            and bool(getattr(note, "fbr_invoice_number", None) or getattr(note, "fbr_reference", None))
+            and not bool(getattr(note, "fbr_is_simulated", False))
+            and str(getattr(note, "fbr_environment", "DEMO")).upper() == "PRODUCTION"
+            and str(getattr(note, "fbr_status", "")).upper() in ("VALID", "SUCCESS", "POSTED")
+        )
+
+        def _draw_note_watermark(canvas, document):
+            if not note_is_valid:
+                canvas.saveState()
+                canvas.setFont("Helvetica-Bold", 34)
+                canvas.setFillColor(colors.HexColor("#CBD5E1"), alpha=0.35)
+                canvas.translate(A4[0] / 2, A4[1] / 2)
+                canvas.rotate(45)
+                canvas.drawCentredString(0, 0, "SIMULATED / PRE-SUBMISSION DRAFT")
+                canvas.restoreState()
+
+        doc.build(story, onFirstPage=_draw_note_watermark, onLaterPages=_draw_note_watermark)
         pdf_bytes = buffer.getvalue()
         buffer.close()
         return pdf_bytes

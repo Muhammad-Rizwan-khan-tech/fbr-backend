@@ -8,6 +8,7 @@ from backend.app.core.database import get_db
 from backend.app.core.dependencies import get_current_user, get_current_tenant
 from backend.app.models.user import User
 from backend.app.models.tenant import Organization, OrganizationSettings
+from backend.app.models.fbr_credential import FBRCredential
 from backend.app.models.fbr import FBRSubmission, FBRSubmissionAttempt
 from backend.app.schemas.fbr import (
     FBRSubmissionResponse, FBRStatusResponse, FBRTestConnectionResponse
@@ -27,6 +28,34 @@ def get_fbr_status(
         OrganizationSettings.organization_id == tenant.id
     ).first()
     fbr_mode = settings.fbr_mode if settings else "DEMO"
+
+    cred = db.query(FBRCredential).filter(FBRCredential.organization_id == tenant.id).first()
+    is_connected = False
+    conn_status = "NOT_CONFIGURED"
+    last_tested_at = None
+    last_success_at = None
+    last_error = None
+
+    if cred and cred.is_active:
+        last_tested_at = cred.last_tested_at
+        last_success_at = cred.last_success_at
+        last_error = cred.last_error
+        has_token = bool(cred.get_auth_token() or cred.get_api_key())
+        if not has_token:
+            conn_status = "NOT_CONFIGURED"
+            is_connected = False
+        elif cred.status in ("VERIFIED", "HEALTHY") and cred.last_success_at is not None:
+            conn_status = "VERIFIED"
+            is_connected = True
+        elif cred.status == "AUTH_FAILED":
+            conn_status = "AUTHENTICATION_FAILED"
+            is_connected = False
+        elif cred.status == "CONNECTION_UNAVAILABLE":
+            conn_status = "CONNECTION_UNAVAILABLE"
+            is_connected = False
+        else:
+            conn_status = "CONFIGURED_NOT_VERIFIED"
+            is_connected = False
 
     last_sub = db.query(FBRSubmission).filter(
         FBRSubmission.tenant_id == tenant.id,
@@ -48,10 +77,18 @@ def get_fbr_status(
         FBRSubmission.status == "VALID"
     ).count()
 
+    adapter_name = "MockFBRAdapter" if fbr_mode in ("DEMO", "MOCK") else "LicensedIntegratorAdapter"
+    if cred and cred.provider:
+        adapter_name = f"{cred.provider}Adapter"
+
     return FBRStatusResponse(
-        is_connected=True,
+        is_connected=is_connected,
+        connection_status=conn_status,
         environment=fbr_mode,
-        adapter="MockFBRAdapter" if fbr_mode in ("DEMO", "MOCK") else "LicensedIntegratorAdapter",
+        adapter=adapter_name,
+        last_tested_at=last_tested_at,
+        last_success_at=last_success_at,
+        last_error=last_error,
         last_successful_submission=last_sub.submitted_at if last_sub else None,
         pending_queue_count=pending_count,
         failed_submissions_count=failed_count,
@@ -119,8 +156,23 @@ def test_fbr_connection(
         OrganizationSettings.organization_id == tenant.id
     ).first()
     fbr_mode = settings.fbr_mode if settings else "DEMO"
+    cred = db.query(FBRCredential).filter(FBRCredential.organization_id == tenant.id).first()
     adapter = FBRAdapterFactory.get_adapter(fbr_mode, tenant_settings=settings)
     probe_result = adapter.test_connection()
+
+    now = datetime.now(timezone.utc)
+    if cred:
+        cred.last_tested_at = now
+        if probe_result.get("success"):
+            cred.last_success_at = now
+            cred.status = "VERIFIED"
+            cred.last_error = None
+        else:
+            cred.last_failed_at = now
+            msg = str(probe_result.get("message", "Connection failed"))
+            cred.status = "AUTH_FAILED" if "auth" in msg.lower() or "401" in msg or "403" in msg else "CONNECTION_UNAVAILABLE"
+            cred.last_error = msg
+        db.commit()
 
     return FBRTestConnectionResponse(
         status=probe_result.get("status", "ONLINE"),

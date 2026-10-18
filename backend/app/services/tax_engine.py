@@ -24,7 +24,7 @@ class PakistanTaxEngine:
         quantity: Decimal,
         unit_price: Decimal,
         discount: Decimal = Decimal("0.00"),
-        tax_rate_percent: Decimal = Decimal("18.00")
+        tax_rate_percent: Decimal = Decimal("0.00")
     ) -> Dict[str, Decimal]:
         if quantity <= Decimal("0"):
             raise TaxCalculationError("Quantity must be greater than zero")
@@ -67,10 +67,12 @@ class PakistanTaxEngine:
         total_tax = Decimal("0.00")
 
         for idx, item in enumerate(items, 1):
+            if "tax_rate" not in item or item.get("tax_rate") is None:
+                raise TaxCalculationError(f"Line item {idx} is missing required 'tax_rate'")
             qty = Decimal(str(item.get("quantity", 0)))
             price = Decimal(str(item.get("unit_price", 0)))
             disc = Decimal(str(item.get("discount", 0)))
-            rate = Decimal(str(item.get("tax_rate", 18.00)))
+            rate = Decimal(str(item.get("tax_rate")))
 
             line_res = cls.calculate_line_item(qty, price, disc, rate)
             subtotal += line_res["gross_amount"]

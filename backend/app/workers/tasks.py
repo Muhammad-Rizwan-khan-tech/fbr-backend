@@ -27,7 +27,20 @@ from backend.app.monitoring.metrics import (
 )
 from backend.app.workers.celery_app import celery_app
 
+import threading
+
 logger = logging.getLogger(__name__)
+_JOB_LOCKS_GUARD = threading.Lock()
+_JOB_LOCKS: Dict[str, threading.Lock] = {}
+
+
+def _get_job_lock(job_id: str) -> threading.Lock:
+    with _JOB_LOCKS_GUARD:
+        lock = _JOB_LOCKS.get(job_id)
+        if lock is None:
+            lock = threading.Lock()
+            _JOB_LOCKS[job_id] = lock
+        return lock
 
 
 def _build_fbr_payload(invoice: Invoice) -> dict:
@@ -83,6 +96,11 @@ def submit_invoice_to_fbr_task(job_id: str, correlation_id: str, tenant_id: str)
     """Processes an FBR invoice submission job asynchronously with idempotency,
     retries, exponential backoff, and dead-letter failure preservation.
     """
+    with _get_job_lock(job_id):
+        return _submit_invoice_to_fbr_task_locked(job_id, correlation_id, tenant_id)
+
+
+def _submit_invoice_to_fbr_task_locked(job_id: str, correlation_id: str, tenant_id: str):
     execution_context.correlation_id.set(correlation_id)
     execution_context.tenant_id.set(tenant_id)
     execution_context.job_id.set(job_id)

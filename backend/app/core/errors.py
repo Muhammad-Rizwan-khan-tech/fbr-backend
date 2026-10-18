@@ -81,6 +81,35 @@ class FBRNotConfiguredError(AppError):
     code, status_code, default_message = "FBR_NOT_CONFIGURED", 409, "The selected FBR integration is not configured."
 
 
+class CredentialsMissingError(AppError):
+    code, status_code, default_message = "CREDENTIALS_MISSING", 409, "PRAL authorization token is not configured for live queries."
+
+
+class UnauthorizedError(AppError):
+    code, status_code, default_message = "PRAL_UNAUTHORIZED", 502, "PRAL gateway rejected the authorization token (HTTP 401/403)."
+
+
+class UpstreamUnavailableError(AppError):
+    code, status_code, default_message = "UPSTREAM_UNAVAILABLE", 503, "PRAL gateway is unreachable or returned a server error."
+
+
+class InvalidRequestError(AppError):
+    code, status_code, default_message = "INVALID_REQUEST", 422, "Invalid request parameters for PRAL reference endpoint."
+
+
+class StaleReferenceError(AppError):
+    code, status_code, default_message = "STALE_REFERENCE", 409, "Cached official reference catalog is expired and live refresh is unavailable."
+
+
+class SchemaDriftError(AppError):
+    code, status_code, default_message = "SCHEMA_DRIFT", 502, "PRAL upstream response did not match the expected v1.12 schema."
+
+
+class RegistrationUnknownError(AppError):
+    code, status_code, default_message = "REGISTRATION_UNKNOWN", 409, "Buyer registration or STATL active status has not been verified."
+
+
+
 class PDFGenerationError(AppError):
     code, status_code, default_message = "PDF_GENERATION_ERROR", 500, "PDF generation failed."
 

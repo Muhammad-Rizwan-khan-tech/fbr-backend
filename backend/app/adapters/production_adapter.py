@@ -88,17 +88,21 @@ class ProductionFBRAdapter(FBRAdapter):
 
     @staticmethod
     def _format_fbr_rate(val: Any) -> str:
-        """Formats tax rate to match official FBR rate description (e.g. '18%')."""
+        """Formats tax rate to match official FBR rate description (e.g. '18%', 'Exempt', 'Rs. 3')."""
         if val is None:
             return "18%"
         str_val = str(val).strip()
-        if "%" in str_val:
+        low = str_val.lower()
+        if low == "exempt":
+            return "Exempt"
+        if "%" in str_val or low.startswith("rs") or "rupee" in low:
             return str_val
         try:
             num = float(str_val)
             return f"{int(num)}%" if num.is_integer() else f"{num}%"
         except (ValueError, TypeError):
             return f"{str_val}%"
+
 
     def _transform_to_fbr_schema(self, invoice_data: Dict[str, Any]) -> Dict[str, Any]:
         """Maps canonical invoice data into official FBR DI API v1.12 schema.
@@ -372,8 +376,10 @@ class ProductionFBRAdapter(FBRAdapter):
                     errors.append(f"Item {idx}: hsCode is required")
                 if not itm.get("productDescription"):
                     errors.append(f"Item {idx}: productDescription is required")
-                if not itm.get("rate") or "%" not in str(itm.get("rate")):
-                    errors.append(f"Item {idx}: rate must be an FBR rate description (e.g. '18%')")
+                r_val = str(itm.get("rate") or "").strip()
+                r_low = r_val.lower()
+                if not r_val or not ("%" in r_val or r_low == "exempt" or r_low.startswith("rs") or "rupee" in r_low):
+                    errors.append(f"Item {idx}: rate must be an FBR rate description (e.g. '18%', 'Exempt')")
                 if not itm.get("uoM"):
                     errors.append(f"Item {idx}: uoM is required")
                 if float(itm.get("quantity", 0)) <= 0:
@@ -648,13 +654,18 @@ class ProductionFBRAdapter(FBRAdapter):
 
         # Check item-level validation failures
         item_errors: List[str] = []
+        first_item_error_code: Optional[str] = None
         for itm_stat in invoice_statuses:
             if isinstance(itm_stat, dict):
                 i_status = str(itm_stat.get("status") or itm_stat.get("Status") or "").lower()
                 i_err = itm_stat.get("error") or itm_stat.get("Error")
+                i_code = itm_stat.get("errorCode") or itm_stat.get("error_code")
                 if i_status in ("invalid", "failed", "rejected") or i_err:
-                    seq = itm_stat.get("itemSeq") or itm_stat.get("item_seq") or ""
-                    item_errors.append(f"Item {seq}: {i_err or i_status}".strip(": "))
+                    seq = itm_stat.get("itemSNo") or itm_stat.get("itemSeq") or itm_stat.get("item_seq") or ""
+                    if i_code and not first_item_error_code:
+                        first_item_error_code = str(i_code).strip()
+                    code_prefix = f"[{i_code}] " if i_code else ""
+                    item_errors.append(f"Item {seq}: {code_prefix}{i_err or i_status}".strip(": "))
 
         has_top_error = bool(top_error and str(top_error).lower() not in ("null", "none", ""))
         has_item_error = len(item_errors) > 0
@@ -688,7 +699,9 @@ class ProductionFBRAdapter(FBRAdapter):
         final_error_message = "; ".join(error_messages) if not success else None
         error_code = None
         if not success:
-            error_code = f"FBR-DI-{status_code}" if status_code else "FBR-DI-INVALID"
+            top_err_code = val_resp.get("errorCode") if isinstance(val_resp, dict) else None
+            resolved_err_code = top_err_code or first_item_error_code or status_code
+            error_code = f"FBR-DI-{resolved_err_code}" if resolved_err_code else "FBR-DI-INVALID"
 
         # Construct or extract QR code data
         qr_code = raw_response.get("qrCode") or raw_response.get("qr_code") or raw_response.get("qr_code_data")

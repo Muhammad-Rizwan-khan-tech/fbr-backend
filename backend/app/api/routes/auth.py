@@ -6,6 +6,7 @@ from backend.app.core.database import get_db
 from backend.app.core.security import verify_password, get_password_hash, create_access_token
 from backend.app.core.dependencies import get_current_user
 from backend.app.models.tenant import Organization, OrganizationSettings, Subscription, SubscriptionUsage
+from backend.app.services.license_service import LicenseService
 from backend.app.models.taxpayer import Taxpayer
 from backend.app.models.branch import Branch
 from backend.app.models.user import User, UserRole
@@ -103,6 +104,13 @@ def register(data: UserRegister, db: Session = Depends(get_db)):
         monthly_invoice_limit=100
     )
     db.add(sub)
+
+    # 7. Create Active Permanent License
+    LicenseService.create_permanent_license_for_org(
+        db=db,
+        organization=org,
+        issued_by="SYSTEM_REGISTER"
+    )
 
     db.commit()
     db.refresh(user)

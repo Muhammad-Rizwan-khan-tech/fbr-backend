@@ -278,6 +278,7 @@ class LicenseService:
             },
             "user": {
                 "id": user.id,
+                "username": user.username or user.email,
                 "email": user.email,
                 "full_name": user.full_name,
                 "role": user.role,

@@ -28,6 +28,14 @@ class OrgDetail(BaseModel):
     status: str
 
 
+class ClientUserDetail(BaseModel):
+    id: str
+    username: Optional[str] = None
+    email: str
+    full_name: str
+    role: str
+
+
 class ActivationRedeemResponse(BaseModel):
     success: bool
     access_token: str
@@ -36,6 +44,7 @@ class ActivationRedeemResponse(BaseModel):
     expires_in: int
     license: LicenseDetail
     organization: OrgDetail
+    user: Optional[ClientUserDetail] = None
     device_id: str
 
 

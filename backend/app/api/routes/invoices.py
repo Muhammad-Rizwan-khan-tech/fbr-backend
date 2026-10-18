@@ -92,6 +92,17 @@ def create_invoice(
     return invoice
 
 
+@router.post("/validate-draft", response_model=InvoiceValidationResult)
+@router.post("/local-validate", response_model=InvoiceValidationResult)
+def validate_draft(
+    data: InvoiceCreate,
+    tenant: Organization = Depends(get_current_tenant),
+    db: Session = Depends(get_db)
+):
+    """Validates an unsaved draft invoice against authoritative PRAL rules locally and returns the serialized v1.12 JSON payload."""
+    return InvoiceService.validate_draft_invoice(db, tenant_id=tenant.id, data=data)
+
+
 @router.get("/{invoice_id}", response_model=InvoiceResponse)
 def get_invoice(
     invoice_id: str,
@@ -107,7 +118,32 @@ def get_invoice(
     return invoice
 
 
+@router.get("/{invoice_id}/fbr-payload")
+def get_invoice_fbr_payload(
+    invoice_id: str,
+    environment: Optional[str] = Query(None, description="PRODUCTION or SANDBOX"),
+    tenant: Organization = Depends(get_current_tenant),
+    db: Session = Depends(get_db),
+):
+    """Returns the exact PRAL DI API v1.12 Section 4.1 JSON payload for inspection."""
+    invoice = db.query(Invoice).filter(
+        Invoice.id == invoice_id,
+        Invoice.tenant_id == tenant.id
+    ).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    payload = InvoiceService.serialize_invoice_to_fbr_v112(db, invoice, environment=environment)
+    return {
+        "invoice_id": invoice.id,
+        "invoice_number": invoice.invoice_number,
+        "environment": (environment or ("SANDBOX" if invoice.scenario_id else "PRODUCTION")).upper(),
+        "official_live_verified": False,
+        "payload": payload,
+    }
+
+
 @router.post("/{invoice_id}/validate", response_model=InvoiceValidationResult)
+@router.post("/{invoice_id}/local-validate", response_model=InvoiceValidationResult)
 def validate_invoice(
     invoice_id: str,
     tenant: Organization = Depends(get_current_tenant),
@@ -121,6 +157,92 @@ def validate_invoice(
         raise HTTPException(status_code=404, detail="Invoice not found")
 
     return InvoiceService.validate_invoice(db, invoice)
+
+
+@router.post("/{invoice_id}/fbr-validate")
+def fbr_validate_invoice_remote(
+    invoice_id: str,
+    environment: str = Query("SANDBOX", description="SANDBOX or PRODUCTION"),
+    tenant: Organization = Depends(get_current_tenant),
+    db: Session = Depends(get_db),
+):
+    """Section 4.3/4.4 Remote PRAL Validation (`validateinvoicedata_sb` / `validateinvoicedata`).
+    Strictly requires a configured PRAL Bearer token; never fakes remote validation when unconfigured.
+    """
+    from backend.app.core.errors import CredentialsMissingError
+    from backend.app.services.pral_reference_service import pral_reference_service
+    from backend.app.adapters.sandbox_adapter import SandboxFBRAdapter
+    from backend.app.adapters.production_adapter import ProductionFBRAdapter
+
+    invoice = db.query(Invoice).filter(
+        Invoice.id == invoice_id,
+        Invoice.tenant_id == tenant.id
+    ).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    token = pral_reference_service.resolve_token(db=db, tenant_id=tenant.id)
+    if not token:
+        raise CredentialsMissingError(
+            "Remote FBR validation is disabled because no PRAL Bearer token is configured for this organization."
+        )
+
+    canonical = FBRService._build_fbr_payload(invoice, db=db)
+    if environment.upper() == "PRODUCTION":
+        adapter = ProductionFBRAdapter(bearer_token=token)
+    else:
+        adapter = SandboxFBRAdapter(bearer_token=token)
+    res = adapter.validate_invoice_remote(canonical)
+    return {
+        "invoice_id": invoice.id,
+        "success": res.success,
+        "status": res.status,
+        "error_code": res.error_code,
+        "error_message": res.error_message,
+        "environment": res.environment,
+        "official_live_verified": bool(res.success),
+        "raw_response": res.raw_response,
+    }
+
+
+@router.post("/{invoice_id}/fbr-submit", response_model=FBRSubmissionResponse)
+def fbr_submit_invoice_live(
+    invoice_id: str,
+    tenant: Organization = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Section 4.1/4.2 Live PRAL Invoice Submission (`postinvoicedata_sb` / `postinvoicedata`).
+    Strictly requires a configured PRAL Bearer token; never fabricates an official FBR invoice number or QR code when credentials are absent.
+    """
+    from backend.app.core.errors import CredentialsMissingError, ConflictError
+    from backend.app.services.pral_reference_service import pral_reference_service
+
+    invoice = db.query(Invoice).filter(
+        Invoice.id == invoice_id,
+        Invoice.tenant_id == tenant.id
+    ).first()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    if invoice.fbr_status == FBRSubmissionStatus.VALID.value and not invoice.fbr_is_simulated:
+        raise ConflictError(
+            f"Invoice {invoice.invoice_number} has already been accepted by FBR ({invoice.fbr_invoice_number}). Duplicate submission blocked."
+        )
+
+    token = pral_reference_service.resolve_token(db=db, tenant_id=tenant.id)
+    if not token:
+        raise CredentialsMissingError(
+            "Live FBR invoice submission is disabled because no PRAL Bearer token is configured for this organization. No official FBR invoice number or QR code has been issued."
+        )
+
+    return FBRService.submit_invoice(
+        db=db,
+        invoice=invoice,
+        user_id=current_user.id,
+        user_email=current_user.email,
+    )
+
 
 
 @router.post("/{invoice_id}/queue-submit", response_model=InvoiceSubmissionJobResponse, status_code=status.HTTP_202_ACCEPTED)

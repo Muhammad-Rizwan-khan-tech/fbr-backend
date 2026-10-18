@@ -45,8 +45,21 @@ def get_current_tenant(
     tenant = db.query(Organization).filter(Organization.id == current_user.tenant_id).first()
     if not tenant:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant organization not found")
-    if not tenant.is_active:
+    if not tenant.is_active or str(tenant.status).upper() == "SUSPENDED":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Organization is inactive or suspended")
+
+    # Authoritative backend license enforcement: block revoked clients immediately
+    if current_user.role != UserRole.SUPER_ADMIN.value:
+        from backend.app.models.license import License, LicenseStatus
+        lic = db.query(License).filter(
+            License.organization_id == tenant.id,
+        ).order_by(License.created_at.desc()).first()
+        if lic and lic.status != LicenseStatus.ACTIVE.value:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Organization license is revoked or inactive. Protected access denied."
+            )
+
     return tenant
 
 
@@ -83,7 +96,11 @@ def require_admin_access(
     # Fallback to standard Bearer token
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
-        token = auth_header.split(" ", 1)[1]
+        token = auth_header.split(" ", 1)[1].strip()
+        from hmac import compare_digest
+        if settings.ADMIN_API_KEY and compare_digest(token, settings.ADMIN_API_KEY.strip()):
+            return request.headers.get("X-Admin-User") or "SUPER_ADMIN_SERVICE"
+
         payload = decode_access_token(token)
         if payload and payload.get("role") == UserRole.SUPER_ADMIN.value:
             user = db.query(User).filter(User.id == payload.get("sub")).first()
@@ -91,6 +108,7 @@ def require_admin_access(
                 return user.email
 
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Super Admin authorization required (provide X-Admin-Key or Super Admin Bearer token)")
+
 
 
 # ---------------------------------------------------------------------------------
