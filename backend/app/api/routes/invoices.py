@@ -393,7 +393,7 @@ def get_invoice_qr_code(
         invoice.fbr_status != FBRSubmissionStatus.VALID.value
         or not invoice.fbr_invoice_number
         or invoice.fbr_is_simulated
-        or (invoice.fbr_environment or "").upper() in ("DEMO", "MOCK")
+        or (invoice.fbr_environment or "").upper() not in ("SANDBOX", "PRODUCTION")
     ):
         raise HTTPException(
             status_code=409,
