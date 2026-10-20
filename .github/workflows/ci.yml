@@ -53,11 +53,12 @@ jobs:
 
       - name: Run Backend Pytest Suite
         env:
-          DATABASE_URL: sqlite:///./test_ci.db
+          DATABASE_URL: sqlite:///./fbr_invoice_cloud.db
           APP_ENV: development
           SECRET_KEY: ci-test-secret-key-must-be-long-enough-32-chars
           PYTHONPATH: .
         run: |
+          python -m backend.app.seed.seed_data
           python -m pytest backend/tests/ -v
 
   frontend-build:
@@ -77,7 +78,10 @@ jobs:
 
       - name: Install Frontend Dependencies
         working-directory: frontend
-        run: npm ci
+        run: |
+          # Bring the legacy lockfile in line with package.json before the clean install.
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          npm ci --no-audit --no-fund
 
       - name: Type Check & Production Build
         working-directory: frontend
