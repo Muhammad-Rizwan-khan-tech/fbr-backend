@@ -1,7 +1,8 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from decimal import Decimal
+import math
 
 
 class InvoiceItemCreate(BaseModel):
@@ -13,7 +14,17 @@ class InvoiceItemCreate(BaseModel):
     uom: str = "NOS"
     unit_price: Decimal
     discount: Decimal = Decimal("0.00")
-    tax_rate: Decimal = Field(..., ge=0, description="Applicable sales tax rate percent (e.g. 0.00, 15.00, 18.00)")
+    tax_rate: Decimal = Field(default=Decimal("18.00"), ge=0, description="Applicable sales tax rate percent (e.g. 0.00, 15.00, 18.00)")
+
+    @field_validator("tax_rate", mode="before")
+    @classmethod
+    def _coerce_tax_rate(cls, v: Any) -> Decimal:
+        if v is None or v == "" or (isinstance(v, float) and math.isnan(v)):
+            return Decimal("18.00")
+        try:
+            return Decimal(str(v))
+        except Exception:
+            return Decimal("18.00")
     rate_desc: Optional[str] = None  # Exact PRAL ratE_DESC e.g. "18%", "Exempt", "18% along with..."
     fixed_notified_value_or_retail_price: Decimal = Decimal("0.00")
     sales_tax_withheld_at_source: Decimal = Decimal("0.00")
