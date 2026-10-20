@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 
@@ -32,6 +32,7 @@ class OrganizationSettingsUpdate(BaseModel):
 class OrganizationSettingsResponse(OrganizationSettingsBase):
     id: str
     organization_id: str
+    fbr_api_token: Optional[str] = Field(default=None, exclude=True, repr=False)
 
     class Config:
         from_attributes = True
