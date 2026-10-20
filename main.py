@@ -148,24 +148,3 @@ def get_developer_portal():
         return HTMLResponse(content=template_path.read_text(encoding="utf-8"))
     return HTMLResponse(content="<h1>FBR Developer Portal</h1>", status_code=200)
 
-
-@app.get("/api/v1/diagnostics/outbound-ip", tags=["Diagnostics"])
-async def check_outbound_ip():
-    """Verifies the exact outbound IP address seen by external services like FBR."""
-    import httpx
-    proxy_url = settings.FIXIE_URL or None
-    try:
-        async with httpx.AsyncClient(proxy=proxy_url, timeout=10.0) as client:
-            res = await client.get("https://api.ipify.org?format=json")
-            return {
-                "proxy_configured": bool(proxy_url),
-                "outbound_ip_seen_by_fbr": res.json().get("ip"),
-                "status": "SUCCESS",
-            }
-    except Exception as e:
-        return {
-            "proxy_configured": bool(proxy_url),
-            "error": str(e),
-            "status": "FAILED",
-        }
-
