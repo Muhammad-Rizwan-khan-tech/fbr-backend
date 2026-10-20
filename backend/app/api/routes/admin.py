@@ -22,6 +22,7 @@ from backend.app.models.invoice import Invoice, FBRSubmissionStatus
 from backend.app.models.admin_audit import AdminAuditLog
 from backend.app.services.license_service import LicenseService
 from backend.app.adapters.factory import FBRAdapterFactory
+from backend.app.services.fbr_verification_service import check_fbr_token
 from backend.app.schemas.admin import (
     AdminCreateOrgRequest,
     AdminSetStatusRequest,
@@ -553,6 +554,8 @@ def set_organization_fbr_credentials(
         cred.sandbox_tested = req.sandbox_tested
     cred.token_rotated_at = datetime.now(timezone.utc)
     cred.status = FBRConnectionStatus.UNTESTED.value
+    cred.last_success_at = None
+    cred.last_tested_at = None
 
     # Update organization setting mode if matching
     if org.settings:
@@ -597,17 +600,30 @@ def test_organization_fbr_connection(
     if not cred:
         raise HTTPException(status_code=400, detail="No FBR credentials configured for this organization.")
 
-    adapter = FBRAdapterFactory.get_adapter_for_tenant(cred)
-    test_result = adapter.test_connection()
+    org_settings = db.query(OrganizationSettings).filter(
+        OrganizationSettings.organization_id == org_id
+    ).first()
+    mode = (org_settings.fbr_mode if org_settings else cred.environment or "DEMO").upper()
+    if mode in ("SANDBOX", "PRODUCTION"):
+        result = check_fbr_token(cred.get_auth_token() or cred.get_api_key() or "")
+    else:
+        result = {
+            "success": False, "status": "NOT_APPLICABLE",
+            "message": "DEMO mode cannot be officially verified", "latency_ms": 0,
+        }
+    test_result = result
 
     cred.last_tested_at = now_utc()
-    if test_result.get("success"):
-        cred.status = FBRConnectionStatus.HEALTHY.value
+    if result["success"]:
+        cred.status = "VERIFIED"
         cred.last_success_at = now_utc()
         cred.last_error = None
     else:
-        cred.status = FBRConnectionStatus.FAILED.value
-        cred.last_error = test_result.get("message", "Connection test failed")
+        cred.status = "AUTH_FAILED" if result["status"] == "AUTH_FAILED" else (
+            "CONFIGURED_NOT_VERIFIED" if result["status"] == "NOT_APPLICABLE" else "CONNECTION_UNAVAILABLE"
+        )
+        cred.last_success_at = None
+        cred.last_error = result["message"]
 
     db.commit()
 
