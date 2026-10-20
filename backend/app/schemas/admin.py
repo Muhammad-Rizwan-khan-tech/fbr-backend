@@ -150,6 +150,7 @@ class AdminCreateClientRequest(BaseModel):
     company_name: str = Field(..., min_length=2, max_length=255, description="Client legal / company name")
     username: str = Field(..., min_length=3, max_length=50, description="Client unique username for desktop terminal")
     fbr_api_token: str = Field(..., min_length=1, description="PRAL-issued FBR API authorization token")
+    fbr_environment: str = Field("SANDBOX", pattern="^(SANDBOX|PRODUCTION)$", description="Choose SANDBOX for testing; PRODUCTION must be selected explicitly.")
 
 
 class AdminUpdateClientRequest(BaseModel):
@@ -159,6 +160,7 @@ class AdminUpdateClientRequest(BaseModel):
 
 class AdminUpdateClientFBRTokenRequest(BaseModel):
     fbr_api_token: str = Field(..., min_length=1, description="New PRAL-issued FBR API authorization token")
+    fbr_environment: Optional[str] = Field(None, pattern="^(SANDBOX|PRODUCTION)$", description="Optional mode change when rotating token")
 
 
 class AdminClientListItem(BaseModel):
