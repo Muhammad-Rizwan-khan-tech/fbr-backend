@@ -15,6 +15,7 @@ from backend.app.models.invoice import Invoice, InvoiceItem, InvoiceStatus, FBRS
 from backend.app.models.note import CreditNote, DebitNote, NoteStatus
 from backend.app.models.license import License, LicenseStatus, ActivationKey, ActivationKeyStatus
 from backend.app.models.fbr_credential import FBRCredential, FBRConnectionStatus
+from backend.app.models.fbr import FBRSubmission, FBRSubmissionAttempt
 from backend.app.core.crypto import hash_activation_secret
 from backend.app.services.tax_engine import PakistanTaxEngine
 

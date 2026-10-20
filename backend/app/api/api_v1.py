@@ -20,12 +20,14 @@ from backend.app.api.routes.external_invoices import router as external_invoices
 from backend.app.api.routes.activation import router as activation_router
 from backend.app.api.routes.admin import router as admin_router
 from backend.app.api.routes.pral_reference import router as pral_reference_router
+from backend.app.api.routes.diagnostics import router as diagnostics_router
 
 api_router = APIRouter()
 
 api_router.include_router(activation_router)
 api_router.include_router(admin_router)
 api_router.include_router(pral_reference_router)
+api_router.include_router(diagnostics_router)
 api_router.include_router(auth_router)
 api_router.include_router(organization_router)
 api_router.include_router(branches_router)

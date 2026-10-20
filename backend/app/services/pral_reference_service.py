@@ -668,7 +668,7 @@ class PralReferenceService:
         strategy = transport_strategy or StatlTransportStrategy.QUERY_PARAMS
 
         try:
-            async with httpx.AsyncClient(timeout=12.0) as client:
+            async with httpx.AsyncClient(timeout=12.0, proxy=settings.FIXIE_URL or None, trust_env=not bool(settings.FIXIE_URL)) as client:
                 if json_body is not None and strategy == StatlTransportStrategy.JSON_BODY_GET:
                     resp = await client.request("GET", url, headers=headers, json=json_body)
                 elif json_body is not None and strategy == StatlTransportStrategy.POST_FALLBACK:

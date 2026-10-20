@@ -433,7 +433,7 @@ class ProductionFBRAdapter(FBRAdapter):
         }
 
         try:
-            with httpx.Client(timeout=settings.FBR_HTTP_TIMEOUT_SECONDS, verify=True) as client:
+            with httpx.Client(timeout=settings.FBR_HTTP_TIMEOUT_SECONDS, verify=True, proxy=settings.FIXIE_URL or None, trust_env=not bool(settings.FIXIE_URL)) as client:
                 resp = client.post(endpoint, json=fbr_payload, headers=headers)
                 if resp.status_code >= 500:
                     return FBRAdapterResponse(
@@ -510,7 +510,7 @@ class ProductionFBRAdapter(FBRAdapter):
             "Content-Type": "application/json",
         }
         try:
-            with httpx.Client(timeout=settings.FBR_HTTP_TIMEOUT_SECONDS, verify=True) as client:
+            with httpx.Client(timeout=settings.FBR_HTTP_TIMEOUT_SECONDS, verify=True, proxy=settings.FIXIE_URL or None, trust_env=not bool(settings.FIXIE_URL)) as client:
                 resp = client.post(endpoint, json=fbr_payload, headers=headers)
                 return self.parse_response(resp.json())
         except Exception as e:
@@ -570,7 +570,7 @@ class ProductionFBRAdapter(FBRAdapter):
             "Content-Type": "application/json",
         }
         try:
-            with httpx.Client(timeout=5.0, verify=True) as client:
+            with httpx.Client(timeout=5.0, verify=True, proxy=settings.FIXIE_URL or None, trust_env=not bool(settings.FIXIE_URL)) as client:
                 resp = client.options(endpoint, headers=headers)
                 latency = int((time.time() - start) * 1000)
                 is_online = resp.status_code in (200, 405, 400, 422)
