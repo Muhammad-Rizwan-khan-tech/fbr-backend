@@ -421,117 +421,58 @@ class SandboxFBRAdapter(FBRAdapter):
 
         fbr_payload = val.get("transformed_payload") or self._transform_to_fbr_schema(invoice_data)
 
-        # Check for simulated test triggers
-        ref = str(invoice_data.get("reference_number") or "").upper()
-        notes = str(invoice_data.get("notes") or "").upper()
-        trigger_text = f"{ref} {notes}"
-
-        if "SIMULATE_TIMEOUT" in trigger_text or self.forced_scenario == "TIMEOUT":
+        if not self.bearer_token:
             return FBRAdapterResponse(
                 success=False,
                 status="FAILED",
-                error_code="NET-SBX-504",
-                error_message="Sandbox gateway timeout after 15000ms. Service temporarily unavailable.",
-                is_retryable=True,
-                raw_response={"http_status": 504, "gateway": "SANDBOX"},
+                error_code="FBR-SBX-CREDENTIALS-MISSING",
+                error_message="Sandbox Bearer token is not configured; no invoice was submitted.",
+                is_retryable=False,
                 environment=self.environment,
                 provider=self.provider,
-                is_simulated=self.is_simulated,
+                is_simulated=False,
             )
 
-        if "SIMULATE_REJECTION" in trigger_text or self.forced_scenario == "REJECTION":
-            sim_rej = {
-                "invoiceNumber": None,
-                "dated": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-                "validationResponse": {
-                    "statusCode": "01",
-                    "status": "Invalid",
-                    "error": "Duplicate Invoice Number or inactive buyer NTN in sandbox ledger",
-                    "invoiceStatuses": [],
-                },
-            }
-            return self.parse_response(sim_rej)
-
-        # If live sandbox credentials and live endpoint are present, attempt actual HTTP transmission
-        is_live_sandbox = (
-            bool(self.bearer_token)
-            and not self.base_url.startswith("http://localhost")
-            and not self.base_url.startswith("https://mock")
-            and "sandbox" in self.base_url.lower()
-        )
-        if is_live_sandbox:
-            endpoint = self.submit_url
-            headers = {
-                "Authorization": f"Bearer {self.bearer_token}",
-                "Content-Type": "application/json",
-                "User-Agent": "FBR-Invoice-Cloud-DI-Sandbox/1.12",
-            }
-            try:
-                with httpx.Client(timeout=settings.FBR_HTTP_TIMEOUT_SECONDS, proxy=settings.FIXIE_URL or None, trust_env=not bool(settings.FIXIE_URL)) as client:
-                    resp = client.post(endpoint, json=fbr_payload, headers=headers)
-                    if resp.status_code >= 500:
-                        return FBRAdapterResponse(
-                            success=False,
-                            status="FAILED",
-                            error_code=f"HTTP-{resp.status_code}",
-                            error_message=f"FBR Sandbox server error: {resp.text[:200]}",
-                            is_retryable=True,
-                            raw_response={"status_code": resp.status_code, "body": resp.text},
-                            environment=self.environment,
-                            provider=self.provider,
-                            is_simulated=False,
-                        )
-                    return self.parse_response(resp.json())
-            except (httpx.TimeoutException, httpx.NetworkError) as net_err:
-                logger.warning(f"Sandbox HTTP request failed: {net_err}")
+        # FBR hosts both environments on gw.fbr.gov.pk. Sandbox routing is
+        # selected by the _sb endpoint suffix, NOT by the word "sandbox" in the host.
+        endpoint = self.submit_url
+        headers = {
+            "Authorization": f"Bearer {self.bearer_token}",
+            "Content-Type": "application/json",
+            "User-Agent": "FBR-Invoice-Cloud-DI-Sandbox/1.12",
+        }
+        try:
+            with httpx.Client(
+                timeout=settings.FBR_HTTP_TIMEOUT_SECONDS,
+                proxy=settings.FIXIE_URL or None,
+                trust_env=not bool(settings.FIXIE_URL),
+            ) as client:
+                resp = client.post(endpoint, json=fbr_payload, headers=headers)
+            if resp.status_code >= 400:
                 return FBRAdapterResponse(
                     success=False,
-                    status="FAILED",
-                    error_code="NET-SBX-CONN",
-                    error_message=f"Network error connecting to FBR Sandbox: {str(net_err)}",
-                    is_retryable=True,
-                    raw_response={"error": str(net_err)},
+                    status="FAILED" if resp.status_code >= 500 else "INVALID",
+                    error_code=f"HTTP-{resp.status_code}",
+                    error_message=f"FBR Sandbox returned HTTP {resp.status_code}.",
+                    is_retryable=resp.status_code >= 500 or resp.status_code == 429,
+                    raw_response={"status_code": resp.status_code},
                     environment=self.environment,
                     provider=self.provider,
                     is_simulated=False,
                 )
-            except Exception as e:
-                logger.error(f"Unexpected error calling FBR Sandbox: {e}")
-
-        # Deterministic / Certification Sandbox Response conforming to DI API v1.12 response shape
-        inv_num = str(invoice_data.get("invoice_number") or invoice_data.get("invoiceNumber") or "INV-001")
-        fbr_inv_num = self._generate_sandbox_fbr_number(inv_num)
-        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-
-        seller_ntn = fbr_payload.get("sellerNTNCNIC", "1234567")
-        buyer_ntn = fbr_payload.get("buyerNTNCNIC", "9876543")
-        total_tax = sum(float(i.get("salesTaxApplicable", 0.0)) for i in fbr_payload.get("items", []))
-        grand_total = sum(float(i.get("totalValues", 0.0)) for i in fbr_payload.get("items", []))
-
-        qr_payload = self._generate_qr_payload(
-            fbr_inv_num, seller_ntn, buyer_ntn, total_tax, grand_total, date_str
-        )
-
-        simulated_v112_response = {
-            "invoiceNumber": fbr_inv_num,
-            "dated": date_str,
-            "qrCode": qr_payload,
-            "validationResponse": {
-                "statusCode": "00",
-                "status": "Valid",
-                "error": None,
-                "invoiceStatuses": [
-                    {
-                        "itemSeq": idx,
-                        "status": "Valid",
-                        "error": None,
-                    }
-                    for idx in range(1, len(fbr_payload.get("items", [])) + 1)
-                ],
-            },
-        }
-
-        return self.parse_response(simulated_v112_response)
+            return self.parse_response(resp.json())
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("Sandbox API submission failed: %s", type(exc).__name__)
+            return FBRAdapterResponse(
+                success=False,
+                status="FAILED",
+                error_code="NET-SBX-CONN",
+                error_message=f"Sandbox API request failed ({type(exc).__name__}); no official invoice confirmed.",
+                is_retryable=True,
+                environment=self.environment,
+                provider=self.provider,
+                is_simulated=False,
+            )
 
     def validate_invoice_remote(self, invoice_data: Dict[str, Any]) -> FBRAdapterResponse:
         """Sends invoice to the sandbox validateinvoicedata_sb endpoint."""
@@ -591,68 +532,9 @@ class SandboxFBRAdapter(FBRAdapter):
         return self.submit_invoice(data)
 
     def test_connection(self) -> Dict[str, Any]:
-        """Probes the Sandbox endpoint to verify connectivity and credentials."""
-        start = time.time()
-        is_live_sandbox = (
-            bool(self.bearer_token)
-            and not self.base_url.startswith("http://localhost")
-            and not self.base_url.startswith("https://mock")
-            and "sandbox" in self.base_url.lower()
-        )
-        if is_live_sandbox:
-            endpoint = self.validate_url
-            headers = {"Authorization": f"Bearer {self.bearer_token}"}
-            try:
-                with httpx.Client(timeout=5.0, proxy=settings.FIXIE_URL or None, trust_env=not bool(settings.FIXIE_URL)) as client:
-                    resp = client.options(endpoint, headers=headers)
-                    latency = int((time.time() - start) * 1000)
-                    is_online = resp.status_code in (200, 405, 400, 422)
-                    return {
-                        "success": is_online,
-                        "status": "ONLINE" if is_online else f"HTTP_{resp.status_code}",
-                        "latency_ms": latency,
-                        "message": f"Connected to FBR Sandbox Gateway ({resp.status_code})",
-                        "environment": "SANDBOX",
-                        "provider": "SANDBOX",
-                        "is_simulated": False,
-                        "details": {
-                            "base_url": self.base_url,
-                            "submit_url": self.submit_url,
-                            "validate_url": self.validate_url,
-                        },
-                    }
-            except Exception as e:
-                latency = int((time.time() - start) * 1000)
-                return {
-                    "success": False,
-                    "status": "OFFLINE",
-                    "latency_ms": latency,
-                    "message": f"Sandbox gateway unreachable: {str(e)}",
-                    "environment": "SANDBOX",
-                    "provider": "SANDBOX",
-                    "is_simulated": False,
-                    "details": {
-                        "base_url": self.base_url,
-                        "submit_url": self.submit_url,
-                    },
-                }
-
-        latency = int((time.time() - start) * 1000) + 12
-        return {
-            "success": True,
-            "status": "ONLINE",
-            "latency_ms": latency,
-            "message": "FBR Sandbox Gateway connection certified and operational.",
-            "environment": "SANDBOX",
-            "provider": "SANDBOX",
-            "is_simulated": False,
-            "details": {
-                "base_url": self.base_url,
-                "submit_url": self.submit_url,
-                "validate_url": self.validate_url,
-                "mode": "Sandbox Certification Mode",
-            },
-        }
+        """Test an authenticated PRAL reference API, not an unauthenticated OPTIONS probe."""
+        from backend.app.services.fbr_connection_service import probe_pral_reference
+        return probe_pral_reference(self.bearer_token, environment="SANDBOX")
 
     def get_reference_data(self) -> Dict[str, Any]:
         return {
