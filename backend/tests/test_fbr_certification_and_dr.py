@@ -55,18 +55,18 @@ def test_mtls_client_certificate_generation_and_audit():
 
 
 def test_fbr_certification_service_five_cycles():
-    """Verify that the 5 standardized certification transmission cycles execute to 100% score."""
+    """Without PRAL credentials the sandbox test suite must not certify production readiness."""
     report = FBRCertificationService.run_full_certification_suite(
         tenant_id="test-cert-tenant",
         taxpayer_ntn="1234567-8",
         pos_id="10001",
         forced_adapter_mode="SANDBOX",
     )
-    assert report["certified"] is True
-    assert report["compliance_score"] == 100.0
+    assert report["certified"] is False
+    assert report["compliance_score"] < 100.0
     assert report["total_cycles"] == 5
-    assert report["passed_cycles"] == 5
-    assert report["certification_status"] == "CERTIFIED_FOR_PRODUCTION"
+    assert report["passed_cycles"] < 5
+    assert report["certification_status"] == "CERTIFICATION_FAILED"
     assert "PRAL-CERT-" in report["dossier_id"]
     assert len(report["cryptographic_seal"]) == 64
 
@@ -79,8 +79,8 @@ def test_fbr_certification_api_endpoints():
     res_run = client.post("/api/v1/fbr/certification/run?forced_adapter_mode=SANDBOX", headers=headers)
     assert res_run.status_code == 200
     data = res_run.json()
-    assert data["certified"] is True
-    assert data["compliance_score"] == 100.0
+    assert data["certified"] is False
+    assert data["compliance_score"] < 100.0
     assert len(data["cycles"]) == 5
 
     # 2. Inspect Certificate Info

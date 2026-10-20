@@ -37,6 +37,12 @@ export const CreateInvoicePage: React.FC<CreateInvoicePageProps> = ({ onBack, on
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [fbrMode, setFbrMode] = useState<'DEMO' | 'SANDBOX' | 'PRODUCTION'>('DEMO');
+  const [scenarioId, setScenarioId] = useState('SN001');
+  const [hsQuery, setHsQuery] = useState('');
+  const [hsOptions, setHsOptions] = useState<Array<{code: string; description: string}>>([]);
+  const [hsSource, setHsSource] = useState('');
+  const [hsLoading, setHsLoading] = useState(false);
 
   // Form State
   const [selectedBranchId, setSelectedBranchId] = useState('');
@@ -52,7 +58,7 @@ export const CreateInvoicePage: React.FC<CreateInvoicePageProps> = ({ onBack, on
     {
       item_code: '',
       description: '',
-      hs_code: '8471.30.10',
+      hs_code: '',
       quantity: 1,
       uom: 'NOS',
       unit_price: 0,
@@ -65,11 +71,13 @@ export const CreateInvoicePage: React.FC<CreateInvoicePageProps> = ({ onBack, on
   useEffect(() => {
     async function loadMasterData() {
       try {
-        const [bList, cList, pList] = await Promise.all([
+        const [bList, cList, pList, organization] = await Promise.all([
           masterApi.getBranches(),
           masterApi.getCustomers(),
           masterApi.getProducts(),
+          masterApi.getOrganization(),
         ]);
+        setFbrMode(organization.settings?.fbr_mode || 'DEMO');
         setBranches(bList);
         setCustomers(cList);
         setProducts(pList);
@@ -100,6 +108,39 @@ export const CreateInvoicePage: React.FC<CreateInvoicePageProps> = ({ onBack, on
     }
     loadMasterData();
   }, []);
+
+  // Autocomplete from the PRAL item catalog (or clearly labeled fallback).
+  useEffect(() => {
+    let active = true;
+    const timer = setTimeout(async () => {
+      setHsLoading(true);
+      try {
+        const data = await masterApi.getPRALHSCodes(hsQuery);
+        if (!active) return;
+        setHsOptions((data.items || []).map((entry) => ({
+          code: String(entry.hS_CODE || entry.hs_code || entry.code || ''),
+          description: String(entry.description || entry.label || ''),
+        })).filter((entry) => entry.code.length > 0));
+        setHsSource(data.official_live_verified ? 'Official PRAL live catalog' :
+          `${data.source || 'Local/fixture catalog'} — not live verified`);
+      } catch {
+        try {
+          const local = await masterApi.getHSCodes(hsQuery);
+          if (!active) return;
+          setHsOptions(local.map((entry) => ({ code: String(entry.code), description: String(entry.description || '') })));
+          setHsSource('Local catalog only — not verified with PRAL');
+        } catch {
+          if (active) {
+            setHsOptions([]);
+            setHsSource('HS catalog unavailable. Please enter an independently confirmed code.');
+          }
+        }
+      } finally {
+        if (active) setHsLoading(false);
+      }
+    }, 350);
+    return () => { active = false; clearTimeout(timer); };
+  }, [hsQuery]);
 
   const handleProductSelect = (index: number, productId: string) => {
     const prod = products.find((p) => p.id === productId);
@@ -134,7 +175,7 @@ export const CreateInvoicePage: React.FC<CreateInvoicePageProps> = ({ onBack, on
         product_id: defaultProd?.id,
         item_code: defaultProd?.item_code || '',
         description: defaultProd?.name || '',
-        hs_code: defaultProd?.hs_code || '8471.30.10',
+        hs_code: defaultProd?.hs_code || '',
         quantity: 1,
         uom: defaultProd?.uom || 'NOS',
         unit_price: defaultProd ? Number(defaultProd.unit_price) : 0,
@@ -186,6 +227,11 @@ export const CreateInvoicePage: React.FC<CreateInvoicePageProps> = ({ onBack, on
       return;
     }
 
+    if (fbrMode === 'SANDBOX' && !/^SN\d{3}$/.test(scenarioId)) {
+      alert('Sandbox scenario ID must look like SN001 (choose the scenario assigned by PRAL).');
+      return;
+    }
+
     setSubmitting(true);
     try {
       const payload = {
@@ -193,6 +239,7 @@ export const CreateInvoicePage: React.FC<CreateInvoicePageProps> = ({ onBack, on
         customer_id: selectedCustomerId,
         invoice_type: invoiceType,
         reference_number: referenceNumber || undefined,
+        scenario_id: fbrMode === 'SANDBOX' ? scenarioId : undefined,
         payment_terms: paymentTerms,
         notes: notes,
         other_charges: otherCharges,
@@ -213,7 +260,18 @@ export const CreateInvoicePage: React.FC<CreateInvoicePageProps> = ({ onBack, on
       const createdInvoice = await invoicesApi.createInvoice(payload);
 
       if (andSubmitToFBR) {
-        await invoicesApi.submitToFBR(createdInvoice.id, 'AUTO');
+        try {
+          const result = await invoicesApi.submitToFBR(createdInvoice.id, 'AUTO');
+          if (result.status !== 'VALID') {
+            alert(`Invoice saved, but FBR did not accept it. Status: ${result.status}. ${result.error_message || ''}`);
+          } else if (fbrMode === 'SANDBOX') {
+            alert('Invoice accepted in FBR Sandbox only — this is NOT a production tax invoice.');
+          } else if (fbrMode === 'DEMO') {
+            alert('DEMO simulated submission — NOT an official FBR invoice.');
+          }
+        } catch (err: any) {
+          alert(`Invoice saved as ${createdInvoice.invoice_number}, but FBR submission failed: ${err.message}`);
+        }
       }
 
       onSuccess(createdInvoice.id);
@@ -260,7 +318,7 @@ export const CreateInvoicePage: React.FC<CreateInvoicePageProps> = ({ onBack, on
             className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-sm shadow-emerald-200 transition-colors disabled:opacity-50"
           >
             <Send className="w-4 h-4" />
-            <span>{submitting ? 'Processing...' : 'Save & Submit to FBR'}</span>
+            <span>{submitting ? 'Processing...' : fbrMode === 'SANDBOX' ? 'Save & Submit to FBR Sandbox' : fbrMode === 'DEMO' ? 'Save & Run Demo' : 'Save & Submit to FBR Production'}</span>
           </button>
         </div>
       </div>
@@ -377,12 +435,27 @@ export const CreateInvoicePage: React.FC<CreateInvoicePageProps> = ({ onBack, on
         </div>
       </div>
 
+      {fbrMode === 'SANDBOX' && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-900">
+          <label className="block font-semibold mb-2">PRAL Sandbox Scenario ID (required)</label>
+          <input
+            value={scenarioId}
+            onChange={(e) => setScenarioId(e.target.value.toUpperCase())}
+            placeholder="SN001"
+            maxLength={5}
+            className="p-2 border border-amber-300 rounded font-mono bg-white"
+          />
+          <p className="mt-2">Use the scenario assigned for your business activity (SN001–SN028). Sandbox acceptance does not create a production invoice.</p>
+        </div>
+      )}
+
       {/* Dynamic Item Grid */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden p-6 space-y-4">
         <div className="flex items-center justify-between border-b border-slate-100 pb-4">
           <div>
             <h3 className="text-sm font-bold text-slate-900">Line Items & FBR Tax Classification</h3>
             <p className="text-xs text-slate-400 mt-0.5">Pakistan HS codes, unit prices, discounts, and sales tax rate breakdown</p>
+            <p className="text-[11px] mt-1 text-amber-700">{hsLoading ? 'Searching HS catalog…' : hsSource || 'HS search loads from available reference data. Verify classification before submission.'}</p>
           </div>
           <button
             onClick={handleAddLine}
@@ -442,11 +515,21 @@ export const CreateInvoicePage: React.FC<CreateInvoicePageProps> = ({ onBack, on
                     <td className="py-2.5 px-3">
                       <input
                         type="text"
+                        list={`hs-options-${idx}`}
                         value={item.hs_code}
-                        onChange={(e) => handleLineChange(idx, 'hs_code', e.target.value)}
-                        placeholder="8471.30.10"
+                        onFocus={() => setHsQuery(item.hs_code)}
+                        onChange={(e) => {
+                          handleLineChange(idx, 'hs_code', e.target.value);
+                          setHsQuery(e.target.value);
+                        }}
+                        placeholder="Search HS code..."
                         className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded font-mono font-medium"
                       />
+                      <datalist id={`hs-options-${idx}`}>
+                        {hsOptions.map((entry) => (
+                          <option key={entry.code} value={entry.code} label={entry.description} />
+                        ))}
+                      </datalist>
                     </td>
                     <td className="py-2.5 px-3">
                       <input

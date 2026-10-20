@@ -28,7 +28,7 @@ export const SettingsPage: React.FC = () => {
       if (data.settings) {
         setFbrMode(data.settings.fbr_mode);
         setFbrPosId(data.settings.fbr_pos_id || '');
-        setFbrApiToken(data.settings.fbr_api_token || '');
+        setFbrApiToken(''); // Never repopulate a saved bearer token in the UI.
         setFbrBaseUrl(data.settings.fbr_base_url || '');
         setInvoicePrefix(data.settings.invoice_prefix);
         setNextInvoiceNumber(data.settings.next_invoice_number);
@@ -52,13 +52,13 @@ export const SettingsPage: React.FC = () => {
       await masterApi.updateSettings({
         fbr_mode: fbrMode,
         fbr_pos_id: fbrPosId || null,
-        fbr_api_token: fbrApiToken || null,
+        fbr_api_token: fbrApiToken.trim() || undefined,
         fbr_base_url: fbrBaseUrl || null,
         invoice_prefix: invoicePrefix,
         next_invoice_number: nextInvoiceNumber,
         default_terms: defaultTerms,
       });
-      alert('Settings updated successfully!');
+      alert('Settings saved. Use Verify PRAL Token to confirm authenticated reference-API access before invoicing.');
       await fetchSettings();
     } catch (err: any) {
       alert(`Failed to save settings: ${err.message}`);
@@ -114,7 +114,7 @@ export const SettingsPage: React.FC = () => {
           className="flex items-center gap-2 px-3 py-2 border border-slate-200 hover:bg-slate-50 rounded-lg text-xs font-semibold text-slate-700 transition-colors disabled:opacity-50"
         >
           <Server className="w-4 h-4 text-emerald-600" />
-          <span>{testingConnection ? 'Probing Gateway...' : 'Test Gateway Connection'}</span>
+          <span>{testingConnection ? 'Checking token...' : 'Verify PRAL Token'}</span>
         </button>
       </div>
 
@@ -219,19 +219,19 @@ export const SettingsPage: React.FC = () => {
                 </label>
                 <input
                   type="password"
-                  placeholder="Bearer token or secret key"
+                  placeholder="Enter new token (leave blank to keep saved token)"
                   value={fbrApiToken}
                   onChange={(e) => setFbrApiToken(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono text-slate-800"
                 />
-                <p className="text-[10px] text-slate-400 mt-1">Encrypted and transmitted strictly via HTTPS</p>
+                <p className="text-[10px] text-slate-400 mt-1">Stored encrypted server-side. Save settings, then verify token. A successful reference lookup does not guarantee invoice acceptance.</p>
               </div>
 
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Custom Gateway URL (Optional)</label>
                 <input
                   type="url"
-                  placeholder={fbrMode === 'SANDBOX' ? 'https://sandbox-api.fbr.gov.pk/v1' : 'https://api.fbr.gov.pk/v1'}
+                  placeholder="https://gw.fbr.gov.pk"
                   value={fbrBaseUrl}
                   onChange={(e) => setFbrBaseUrl(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono text-slate-800"

@@ -532,7 +532,7 @@ def set_organization_fbr_credentials(
         db.add(cred)
 
     cred.environment = req.environment
-    cred.provider = req.provider
+    cred.provider = req.environment if req.provider in ("MOCK", "PRAL") and req.environment in ("SANDBOX", "PRODUCTION") else req.provider
     if req.fbr_pos_id is not None:
         cred.fbr_pos_id = req.fbr_pos_id
     if req.base_url is not None:
@@ -597,8 +597,11 @@ def test_organization_fbr_connection(
     if not cred:
         raise HTTPException(status_code=400, detail="No FBR credentials configured for this organization.")
 
-    adapter = FBRAdapterFactory.get_adapter_for_tenant(cred)
-    test_result = adapter.test_connection()
+    from backend.app.services.fbr_connection_service import probe_pral_reference
+    token = (cred.get_auth_token() or cred.get_api_key()) if cred.is_active else ""
+    if cred.environment not in ("SANDBOX", "PRODUCTION"):
+        raise HTTPException(status_code=409, detail="Official FBR verification requires SANDBOX or PRODUCTION mode.")
+    test_result = probe_pral_reference(token, environment=cred.environment)
 
     cred.last_tested_at = now_utc()
     if test_result.get("success"):
@@ -606,7 +609,8 @@ def test_organization_fbr_connection(
         cred.last_success_at = now_utc()
         cred.last_error = None
     else:
-        cred.status = FBRConnectionStatus.FAILED.value
+        cred.status = "AUTH_FAILED" if test_result.get("status") == "AUTH_FAILED" else "CONNECTION_UNAVAILABLE"
+        cred.last_failed_at = now_utc()
         cred.last_error = test_result.get("message", "Connection test failed")
 
     db.commit()
@@ -617,6 +621,16 @@ def test_organization_fbr_connection(
         "message": test_result.get("message"),
         "latency_ms": test_result.get("latency_ms"),
     }
+
+
+@router.post("/clients/{client_id}/fbr-test-connection")
+def test_client_fbr_connection(
+    client_id: str,
+    admin: str = Depends(require_admin_access),
+    db: Session = Depends(get_db),
+):
+    """Read-only authenticated PRAL token verification for the client dashboard."""
+    return test_organization_fbr_connection(client_id, admin=admin, db=db)
 
 
 @router.get("/audit-logs")
@@ -740,7 +754,7 @@ def create_client(
     settings_obj = OrganizationSettings(
         organization_id=org.id,
         invoice_prefix="INV",
-        fbr_mode="PRODUCTION",
+        fbr_mode=req.fbr_environment,
     )
     db.add(settings_obj)
 
@@ -762,8 +776,8 @@ def create_client(
     # 4. Store FBR API Token Encrypted via AES-256-GCM
     cred = FBRCredential(
         organization_id=org.id,
-        environment="PRODUCTION",
-        provider="PRAL",
+        environment=req.fbr_environment,
+        provider=req.fbr_environment,
         status="CONFIGURED_NOT_VERIFIED",
     )
     cred.set_credentials(
@@ -1145,7 +1159,16 @@ def update_client_fbr_token(
         auth_token=fbr_token,
         api_key=fbr_token,
     )
+    if req.fbr_environment:
+        cred.environment = req.fbr_environment
+        cred.provider = req.fbr_environment
+        org_settings = db.query(OrganizationSettings).filter(
+            OrganizationSettings.organization_id == client_id
+        ).first()
+        if org_settings:
+            org_settings.fbr_mode = req.fbr_environment
     cred.status = "CONFIGURED_NOT_VERIFIED"
+    cred.last_success_at = None
     cred.token_rotated_at = now_utc()
     cred.last_error = None
 

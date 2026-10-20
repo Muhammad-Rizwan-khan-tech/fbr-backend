@@ -37,8 +37,34 @@ def update_settings(
         settings = OrganizationSettings(organization_id=tenant.id)
         db.add(settings)
 
-    for field, val in data.model_dump(exclude_unset=True).items():
+    changes = data.model_dump(exclude_unset=True)
+    raw_token = changes.pop("fbr_api_token", None)
+    for field, val in changes.items():
         setattr(settings, field, val)
+
+    # Never persist FBR tokens in the legacy plaintext organization_settings
+    # column. Keep client and admin views in sync through the encrypted vault.
+    from backend.app.models.fbr_credential import FBRCredential, FBRConnectionStatus
+    cred = db.query(FBRCredential).filter(
+        FBRCredential.organization_id == tenant.id
+    ).first()
+    mode = (settings.fbr_mode or "DEMO").upper()
+    if raw_token and raw_token.strip():
+        if not cred:
+            cred = FBRCredential(organization_id=tenant.id)
+            db.add(cred)
+        cred.set_credentials(auth_token=raw_token, api_key=raw_token)
+        cred.status = FBRConnectionStatus.UNTESTED.value
+        cred.last_success_at = None
+        cred.last_error = None
+    if cred and (raw_token or "fbr_mode" in changes):
+        cred.environment = mode
+        cred.provider = mode
+        cred.fbr_pos_id = settings.fbr_pos_id
+        cred.base_url = settings.fbr_base_url
+        cred.status = FBRConnectionStatus.UNTESTED.value
+        cred.last_success_at = None
+    settings.fbr_api_token = None
 
     db.commit()
     db.refresh(settings)
@@ -51,7 +77,7 @@ def update_settings(
         entity_id=settings.id,
         user_id=current_user.id,
         user_email=current_user.email,
-        after_state=data.model_dump(exclude_unset=True)
+        after_state={**changes, "fbr_token_updated": bool(raw_token)}
     )
 
     return settings

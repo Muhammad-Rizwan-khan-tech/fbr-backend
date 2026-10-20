@@ -334,11 +334,11 @@ export const InvoicesPage: React.FC<InvoicesPageProps> = ({ onNewInvoice }) => {
                           <FileText className="w-3.5 h-3.5 text-slate-500" />
                           <span>{downloadingPdfId === inv.id ? '...' : 'PDF'}</span>
                         </button>
-                        {inv.fbr_status === 'VALID' ? (
+                        {inv.fbr_status === 'VALID' && !!inv.fbr_invoice_number && !inv.fbr_is_simulated && inv.fbr_environment !== 'DEMO' ? (
                           <button
                             onClick={() => setSelectedQRInvoice(inv)}
                             className="flex items-center gap-1 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg font-medium border border-emerald-200 transition-colors"
-                            title="View Official FBR QR Code"
+                            title="View authenticated FBR invoice reference QR"
                           >
                             <QrCode className="w-3.5 h-3.5" />
                             <span>QR Code</span>

@@ -39,6 +39,16 @@ export const masterApi = {
     return apiFetch(`/tax/hs-codes${qs}`);
   },
 
+  getPRALHSCodes: async (search: string = ''): Promise<{
+    items: Array<Record<string, any>>;
+    source: string;
+    official_live_verified: boolean;
+  }> => {
+    const query = new URLSearchParams({ limit: '60' });
+    if (search.trim()) query.set('search', search.trim());
+    return apiFetch(`/fbr/references/item-codes?${query.toString()}`);
+  },
+
   getUOMs: async (): Promise<any[]> => {
     return apiFetch('/tax/uoms');
   },

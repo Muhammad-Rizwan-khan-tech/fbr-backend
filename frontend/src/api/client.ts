@@ -120,3 +120,23 @@ export async function apiFetch<T>(endpoint: string, options: RequestInit = {}): 
 
   return response.json();
 }
+
+
+/** Fetch an authenticated binary asset (the browser's <img> tag does not send Bearer tokens). */
+export async function apiFetchBlob(endpoint: string): Promise<Blob> {
+  const token = localStorage.getItem('token');
+  if (!token) throw new Error('Login required to view this invoice QR code.');
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const response = await fetch(`${getApiBaseUrl()}/api/v1${cleanEndpoint}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) {
+    let message = `QR lookup failed (HTTP ${response.status})`;
+    try {
+      const body = await response.json();
+      if (typeof body?.detail === 'string') message = body.detail;
+    } catch { /* binary or non-JSON error */ }
+    throw new Error(message);
+  }
+  return response.blob();
+}

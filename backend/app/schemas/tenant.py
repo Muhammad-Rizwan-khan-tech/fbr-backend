@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 
@@ -32,6 +32,8 @@ class OrganizationSettingsUpdate(BaseModel):
 class OrganizationSettingsResponse(OrganizationSettingsBase):
     id: str
     organization_id: str
+    # Token is never returned to any frontend, even for legacy plaintext rows.
+    fbr_api_token: Optional[str] = Field(default=None, exclude=True)
 
     class Config:
         from_attributes = True
