@@ -23,6 +23,7 @@ from backend.app.models.admin_audit import AdminAuditLog
 from backend.app.services.license_service import LicenseService
 from backend.app.adapters.factory import FBRAdapterFactory
 from backend.app.services.fbr_verification_service import check_fbr_token
+from backend.app.services.fbr_verification_service import check_fbr_token
 from backend.app.schemas.admin import (
     AdminCreateOrgRequest,
     AdminSetStatusRequest,
@@ -894,6 +895,9 @@ def list_clients(
             "company_name": o.name,
             "username": username,
             "fbr_status": fbr_status,
+            "fbr_environment": cred.environment if cred else "NOT_CONFIGURED",
+            "fbr_last_tested_at": cred.last_tested_at.isoformat() if cred and cred.last_tested_at else None,
+            "fbr_last_error": cred.last_error if cred else None,
             "license_status": lic_status,
             "activation_status": activation_status,
             "license_id": lic.id if lic else None,
@@ -963,6 +967,9 @@ def get_client(
         "email": client_user.email if client_user else None,
         "status": org.status,
         "fbr_status": fbr_status,
+        "fbr_environment": cred.environment if cred else "NOT_CONFIGURED",
+        "fbr_last_tested_at": cred.last_tested_at.isoformat() if cred and cred.last_tested_at else None,
+        "fbr_last_error": cred.last_error if cred else None,
         "license": {
             "id": lic.id if lic else None,
             "license_number": lic.license_number if lic else None,
@@ -1195,3 +1202,57 @@ def update_client_fbr_token(
         "fbr_status": "Configured — Not Verified",
     }
 
+
+@router.post("/clients/{client_id}/fbr-connection/test")
+def verify_client_fbr_token(
+    client_id: str,
+    admin: str = Depends(require_admin_access),
+    db: Session = Depends(get_db),
+):
+    """Check stored PRAL token using a read-only reference endpoint, never an invoice."""
+    org = db.query(Organization).filter(Organization.id == client_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Client organization not found")
+    cred = db.query(FBRCredential).filter(FBRCredential.organization_id == client_id).first()
+    if not cred or not cred.is_active:
+        return {"success": False, "status": "NOT_CONFIGURED",
+                "fbr_status": "Not Configured",
+                "message": "No active FBR token configured for this client", "latency_ms": 0}
+    tenant_settings = db.query(OrganizationSettings).filter(
+        OrganizationSettings.organization_id == client_id
+    ).first()
+    mode = (tenant_settings.fbr_mode if tenant_settings else cred.environment or "SANDBOX").upper()
+    if mode not in ("SANDBOX", "PRODUCTION"):
+        return {
+            "success": False, "status": "INVALID_MODE", "fbr_status": "Configured — Not Verified",
+            "environment": mode, "latency_ms": 0,
+            "message": "Select SANDBOX or PRODUCTION before verifying a token",
+        }
+    token = cred.get_auth_token() or cred.get_api_key()
+    outcome = check_fbr_token(token or "")
+    cred.last_tested_at = now_utc()
+    if outcome["success"]:
+        cred.status = "VERIFIED"
+        cred.last_success_at = now_utc()
+        cred.last_error = None
+        visible_status = "Verified"
+    else:
+        cred.last_success_at = None
+        cred.last_failed_at = now_utc()
+        code = outcome["status"]
+        cred.status = "AUTH_FAILED" if code == "AUTH_FAILED" else (
+            "CONFIGURED_NOT_VERIFIED" if code == "UNCONFIGURED" else "CONNECTION_UNAVAILABLE"
+        )
+        cred.last_error = outcome["message"]
+        visible_status = (
+            "Authentication Failed" if code == "AUTH_FAILED" else
+            "Not Configured" if code == "UNCONFIGURED" else
+            "Connection Unavailable"
+        )
+    db.commit()
+    return {
+        "success": outcome["success"], "status": outcome["status"],
+        "fbr_status": visible_status, "environment": mode,
+        "message": outcome["message"], "latency_ms": outcome["latency_ms"],
+        "scope": "Authenticated PRAL reference API only; invoice acceptance is verified separately",
+    }
