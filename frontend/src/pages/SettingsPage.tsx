@@ -231,7 +231,7 @@ export const SettingsPage: React.FC = () => {
                 <label className="block font-semibold text-slate-700 mb-1">Custom Gateway URL (Optional)</label>
                 <input
                   type="url"
-                  placeholder={fbrMode === 'SANDBOX' ? 'https://sandbox-api.fbr.gov.pk/v1' : 'https://api.fbr.gov.pk/v1'}
+                  placeholder="https://gw.fbr.gov.pk"
                   value={fbrBaseUrl}
                   onChange={(e) => setFbrBaseUrl(e.target.value)}
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg font-mono text-slate-800"
