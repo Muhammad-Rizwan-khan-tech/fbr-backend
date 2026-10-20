@@ -467,7 +467,7 @@ class SandboxFBRAdapter(FBRAdapter):
                 "User-Agent": "FBR-Invoice-Cloud-DI-Sandbox/1.12",
             }
             try:
-                with httpx.Client(timeout=settings.FBR_HTTP_TIMEOUT_SECONDS) as client:
+                with httpx.Client(timeout=settings.FBR_HTTP_TIMEOUT_SECONDS, proxy=settings.FIXIE_URL or None, trust_env=not bool(settings.FIXIE_URL)) as client:
                     resp = client.post(endpoint, json=fbr_payload, headers=headers)
                     if resp.status_code >= 500:
                         return FBRAdapterResponse(
@@ -555,7 +555,7 @@ class SandboxFBRAdapter(FBRAdapter):
             "Content-Type": "application/json",
         }
         try:
-            with httpx.Client(timeout=settings.FBR_HTTP_TIMEOUT_SECONDS) as client:
+            with httpx.Client(timeout=settings.FBR_HTTP_TIMEOUT_SECONDS, proxy=settings.FIXIE_URL or None, trust_env=not bool(settings.FIXIE_URL)) as client:
                 resp = client.post(endpoint, json=fbr_payload, headers=headers)
                 return self.parse_response(resp.json())
         except Exception as e:
@@ -603,7 +603,7 @@ class SandboxFBRAdapter(FBRAdapter):
             endpoint = self.validate_url
             headers = {"Authorization": f"Bearer {self.bearer_token}"}
             try:
-                with httpx.Client(timeout=5.0) as client:
+                with httpx.Client(timeout=5.0, proxy=settings.FIXIE_URL or None, trust_env=not bool(settings.FIXIE_URL)) as client:
                     resp = client.options(endpoint, headers=headers)
                     latency = int((time.time() - start) * 1000)
                     is_online = resp.status_code in (200, 405, 400, 422)
