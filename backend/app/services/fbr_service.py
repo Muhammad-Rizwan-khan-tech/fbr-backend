@@ -170,7 +170,7 @@ class FBRService:
         user_email: str,
         forced_scenario: str = "AUTO"
     ) -> FBRSubmission:
-        if invoice.fbr_status == FBRSubmissionStatus.VALID.value:
+        if invoice.fbr_status == FBRSubmissionStatus.VALID.value and not invoice.fbr_is_simulated:
             raise HTTPException(status_code=400, detail="Invoice has already been successfully submitted and verified with FBR")
 
         invoice.status = InvoiceStatus.SUBMITTING.value
@@ -229,6 +229,15 @@ class FBRService:
             latency_ms=latency
         )
         db.add(attempt)
+
+        # Record the provenance so simulated invoices never appear official.
+        invoice.fbr_environment = adapter_res.environment or fbr_mode
+        invoice.fbr_provider = adapter_res.provider
+        invoice.fbr_is_simulated = bool(
+            adapter_res.is_simulated
+            or fbr_mode.upper() in ("DEMO", "MOCK")
+            or adapter.__class__.__name__ in ("MockFBRAdapter", "LicensedIntegratorAdapter")
+        )
 
         # Sync invoice state
         if adapter_res.status == "VALID":
@@ -318,6 +327,12 @@ class FBRService:
         )
         db.add(attempt)
 
+        invoice.fbr_environment = adapter_res.environment
+        invoice.fbr_provider = adapter_res.provider
+        invoice.fbr_is_simulated = bool(
+            adapter_res.is_simulated
+            or adapter.__class__.__name__ in ("MockFBRAdapter", "LicensedIntegratorAdapter")
+        )
         if adapter_res.status == "VALID":
             invoice.status = InvoiceStatus.VALID.value
             invoice.fbr_status = FBRSubmissionStatus.VALID.value
