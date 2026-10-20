@@ -40,22 +40,21 @@ def test_sandbox_adapter_validation_and_submission():
     val_res = adapter.validate_invoice(valid_payload)
     assert val_res["is_valid"] is True
 
-    # Test submission
+    # Without a real token, never fabricate an official invoice.
     res = adapter.submit_invoice(valid_payload)
-    assert res.success is True
-    assert res.status == "VALID"
-    assert res.fbr_invoice_number.startswith("SBX-")
-    assert "FBR-DI-SBX" in res.qr_code_data
+    assert res.success is False
+    assert res.status == "FAILED"
+    assert res.fbr_invoice_number is None
+    assert res.error_code == "FBR-SBX-CREDENTIALS-MISSING"
     assert res.environment == "SANDBOX"
 
 
 def test_sandbox_adapter_test_connection():
     adapter = SandboxFBRAdapter()
     conn_result = adapter.test_connection()
-    assert conn_result["success"] is True
-    assert conn_result["status"] == "ONLINE"
+    assert conn_result["success"] is False
+    assert conn_result["status"] == "UNCONFIGURED"
     assert conn_result["environment"] == "SANDBOX"
-    assert "latency_ms" in conn_result
 
 
 def test_production_adapter_guard_unconfigured():
