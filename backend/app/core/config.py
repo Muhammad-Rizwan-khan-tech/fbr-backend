@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     FBR_API_KEY: str = ""
     FBR_CLIENT_ID: str = ""
     FBR_CLIENT_SECRET: str = ""
+    FIXIE_URL: str = ""  # Fixie HTTP proxy URL; configure securely on Render
     FBR_HTTP_TIMEOUT_SECONDS: float = 15.0
     FBR_MAX_ATTEMPTS: int = 4
     FBR_RETRY_DELAYS_SECONDS: str = "300,900,1800"  # delay after attempt 1, 2, 3, ...
