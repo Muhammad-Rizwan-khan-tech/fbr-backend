@@ -389,10 +389,19 @@ def get_invoice_qr_code(
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
-    qr_text = invoice.fbr_qr_data or (
-        f"FBR-DI|INV:{invoice.invoice_number}|S-NTN:{invoice.seller_ntn}|"
-        f"TOT:{invoice.grand_total}|STATUS:{invoice.status}"
-    )
+    if (
+        invoice.fbr_status != FBRSubmissionStatus.VALID.value
+        or not invoice.fbr_invoice_number
+        or invoice.fbr_is_simulated
+        or (invoice.fbr_environment or "").upper() in ("DEMO", "MOCK")
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="An accepted, non-simulated FBR invoice number is required before a QR code can be displayed.",
+        )
+    # The QR encodes the available invoice reference or provider QR payload.
+    # Its presence alone does not prove an official FBR digital signature.
+    qr_text = invoice.fbr_qr_data or f"FBR invoice reference: {invoice.fbr_invoice_number}"
 
     qr = qrcode.QRCode(
         version=1,
