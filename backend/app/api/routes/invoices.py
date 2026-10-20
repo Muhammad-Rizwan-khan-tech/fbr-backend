@@ -389,10 +389,12 @@ def get_invoice_qr_code(
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
-    qr_text = invoice.fbr_qr_data or (
-        f"FBR-DI|INV:{invoice.invoice_number}|S-NTN:{invoice.seller_ntn}|"
-        f"TOT:{invoice.grand_total}|STATUS:{invoice.status}"
-    )
+    # Never manufacture an "official FBR" QR for drafts or failed submissions.
+    if invoice.fbr_status != FBRSubmissionStatus.VALID.value:
+        raise HTTPException(status_code=409, detail="Invoice has not been accepted by FBR. Verification QR unavailable.")
+    qr_text = invoice.fbr_qr_data or invoice.fbr_invoice_number
+    if not qr_text:
+        raise HTTPException(status_code=409, detail="No verified invoice number or QR payload available.")
 
     qr = qrcode.QRCode(
         version=1,
@@ -408,7 +410,7 @@ def get_invoice_qr_code(
     img.save(buffer, format="PNG")
     buffer.seek(0)
 
-    return Response(content=buffer.getvalue(), media_type="image/png")
+    return Response(content=buffer.getvalue(), media_type="image/png", headers={"Cache-Control": "private, no-store"})
 
 
 class BatchSubmitRequest(BaseModel):

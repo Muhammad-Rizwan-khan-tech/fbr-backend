@@ -455,9 +455,8 @@ class SandboxFBRAdapter(FBRAdapter):
         # If live sandbox credentials and live endpoint are present, attempt actual HTTP transmission
         is_live_sandbox = (
             bool(self.bearer_token)
-            and not self.base_url.startswith("http://localhost")
+            and self.base_url.startswith("https://")
             and not self.base_url.startswith("https://mock")
-            and "sandbox" in self.base_url.lower()
         )
         if is_live_sandbox:
             endpoint = self.submit_url
@@ -496,9 +495,23 @@ class SandboxFBRAdapter(FBRAdapter):
                     is_simulated=False,
                 )
             except Exception as e:
-                logger.error(f"Unexpected error calling FBR Sandbox: {e}")
+                logger.error("Unexpected FBR Sandbox failure: %s", type(e).__name__)
+                return FBRAdapterResponse(
+                    success=False, status="FAILED", error_code="NET-SBX-UNEXPECTED",
+                    error_message="Sandbox gateway returned an unexpected response or connection failure",
+                    is_retryable=True, environment=self.environment,
+                    provider=self.provider, is_simulated=False,
+                )
 
-        # Deterministic / Certification Sandbox Response conforming to DI API v1.12 response shape
+        if self.bearer_token:
+            return FBRAdapterResponse(
+                success=False, status="FAILED", error_code="FBR-SBX-GATEWAY-CONFIG",
+                error_message="Configured sandbox gateway must use an HTTPS URL. No simulated FBR invoice was issued.",
+                is_retryable=False, environment=self.environment,
+                provider=self.provider, is_simulated=False,
+            )
+
+        # Unit-test / offline demo fallback only (never call this for a configured tenant).
         inv_num = str(invoice_data.get("invoice_number") or invoice_data.get("invoiceNumber") or "INV-001")
         fbr_inv_num = self._generate_sandbox_fbr_number(inv_num)
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -595,9 +608,8 @@ class SandboxFBRAdapter(FBRAdapter):
         start = time.time()
         is_live_sandbox = (
             bool(self.bearer_token)
-            and not self.base_url.startswith("http://localhost")
+            and self.base_url.startswith("https://")
             and not self.base_url.startswith("https://mock")
-            and "sandbox" in self.base_url.lower()
         )
         if is_live_sandbox:
             endpoint = self.validate_url
@@ -637,21 +649,15 @@ class SandboxFBRAdapter(FBRAdapter):
                     },
                 }
 
-        latency = int((time.time() - start) * 1000) + 12
+        latency = int((time.time() - start) * 1000)
         return {
-            "success": True,
-            "status": "ONLINE",
+            "success": False,
+            "status": "UNCONFIGURED" if not self.bearer_token else "INVALID_GATEWAY",
             "latency_ms": latency,
-            "message": "FBR Sandbox Gateway connection certified and operational.",
+            "message": "A real HTTPS FBR Sandbox gateway and security token are required. No live connection was verified.",
             "environment": "SANDBOX",
             "provider": "SANDBOX",
             "is_simulated": False,
-            "details": {
-                "base_url": self.base_url,
-                "submit_url": self.submit_url,
-                "validate_url": self.validate_url,
-                "mode": "Sandbox Certification Mode",
-            },
         }
 
     def get_reference_data(self) -> Dict[str, Any]:

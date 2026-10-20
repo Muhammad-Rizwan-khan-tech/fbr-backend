@@ -52,8 +52,9 @@ def test_sandbox_adapter_validation_and_submission():
 def test_sandbox_adapter_test_connection():
     adapter = SandboxFBRAdapter()
     conn_result = adapter.test_connection()
-    assert conn_result["success"] is True
-    assert conn_result["status"] == "ONLINE"
+    # Never claim real PRAL connectivity when no token has been supplied.
+    assert conn_result["success"] is False
+    assert conn_result["status"] == "UNCONFIGURED"
     assert conn_result["environment"] == "SANDBOX"
     assert "latency_ms" in conn_result
 

@@ -173,23 +173,37 @@ class FBRService:
         if invoice.fbr_status == FBRSubmissionStatus.VALID.value:
             raise HTTPException(status_code=400, detail="Invoice has already been successfully submitted and verified with FBR")
 
-        invoice.status = InvoiceStatus.SUBMITTING.value
-        db.commit()
-
-        settings = db.query(OrganizationSettings).filter(
+        tenant_settings = db.query(OrganizationSettings).filter(
             OrganizationSettings.organization_id == invoice.tenant_id
         ).first()
-        fbr_mode = settings.fbr_mode if settings else "DEMO"
+        fbr_mode = (tenant_settings.fbr_mode if tenant_settings else "DEMO").upper()
         cred = db.query(FBRCredential).filter(
-            FBRCredential.organization_id == invoice.tenant_id
+            FBRCredential.organization_id == invoice.tenant_id,
+            FBRCredential.is_active.is_(True),
         ).first()
+
+        if fbr_mode in ("SANDBOX", "PRODUCTION"):
+            token = (cred.get_auth_token() or cred.get_api_key()) if cred else None
+            token = token or (tenant_settings.fbr_api_token if tenant_settings else None) or app_settings.FBR_API_KEY
+            if not token:
+                raise HTTPException(status_code=409, detail="FBR security token is not configured. No invoice was submitted.")
 
         adapter = FBRAdapterFactory.get_adapter_for_tenant(
             credential=cred,
-            tenant_settings=settings,
+            tenant_settings=tenant_settings,
             forced_scenario=forced_scenario
         )
+        if fbr_mode in ("SANDBOX", "PRODUCTION") and adapter.__class__.__name__ not in (
+            "SandboxFBRAdapter", "ProductionFBRAdapter"
+        ):
+            raise HTTPException(status_code=409, detail="FBR adapter does not match the selected live gateway mode.")
+
         payload = cls._build_fbr_payload(invoice, db=db)
+        if fbr_mode == "SANDBOX" and not payload.get("scenarioId"):
+            raise HTTPException(status_code=422, detail="Choose an FBR Sandbox scenario (SN001–SN028) before submission.")
+
+        invoice.status = InvoiceStatus.SUBMITTING.value
+        db.commit()
         
         start_time = time.time()
         adapter_res = adapter.submit_invoice(payload)
@@ -230,8 +244,13 @@ class FBRService:
         )
         db.add(attempt)
 
+        # Preserve authoritative transport provenance on the invoice.
+        invoice.fbr_environment = adapter_res.environment or fbr_mode
+        invoice.fbr_provider = adapter_res.provider or adapter.__class__.__name__
+        invoice.fbr_is_simulated = bool(adapter_res.is_simulated or fbr_mode in ("DEMO", "MOCK"))
+
         # Sync invoice state
-        if adapter_res.status == "VALID":
+        if adapter_res.success and adapter_res.status == "VALID":
             invoice.status = InvoiceStatus.VALID.value
             invoice.fbr_status = FBRSubmissionStatus.VALID.value
             invoice.fbr_invoice_number = adapter_res.fbr_invoice_number
@@ -318,7 +337,7 @@ class FBRService:
         )
         db.add(attempt)
 
-        if adapter_res.status == "VALID":
+        if adapter_res.success and adapter_res.status == "VALID":
             invoice.status = InvoiceStatus.VALID.value
             invoice.fbr_status = FBRSubmissionStatus.VALID.value
             invoice.fbr_invoice_number = adapter_res.fbr_invoice_number

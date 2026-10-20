@@ -354,15 +354,14 @@ class PDFInvoiceGenerator:
         story.append(Spacer(1, 4 * mm))
 
         # 5. Summary & QR Code Block
-        # Generate QR code representation
-        qr_payload = invoice.fbr_qr_data
-        if not qr_payload:
-            # Standard simulated/preliminary QR payload
-            qr_payload = (
-                f"FBR-POS|INV:{invoice.fbr_invoice_number or invoice.invoice_number}|"
-                f"NTN:{invoice.seller_ntn}|TOTAL:{invoice.grand_total}|TAX:{invoice.total_tax}"
-            )
-        qr_drawing = self._build_qr_code(qr_payload, size=1.0 * inch)
+        # Never print a fabricated FBR verification QR for a draft or rejected invoice.
+        fbr_accepted = str(invoice.fbr_status).upper() == "VALID" and bool(invoice.fbr_invoice_number)
+        verified_production = fbr_accepted and not bool(invoice.fbr_is_simulated)
+        qr_payload = (invoice.fbr_qr_data or invoice.fbr_invoice_number) if fbr_accepted else None
+        qr_drawing = (
+            self._build_qr_code(qr_payload, size=1.0 * inch)
+            if qr_payload else Paragraph("QR unavailable until FBR acceptance", self.styles["InvSmall"])
+        )
 
         summary_rows = [
             [Paragraph("Subtotal (Gross):", self.styles["InvTableCellBold"]), Paragraph(f"PKR {float(invoice.subtotal):,.2f}", self.styles["InvTableCellRight"])],
@@ -392,12 +391,13 @@ class PDFInvoiceGenerator:
         ]))
 
         qr_text_note = (
-            "<b>FBR Digital Verification</b><br/>"
-            "<font size='6.5' color='#64748B'>"
-            "Scan QR (1.0\" x 1.0\") to verify authenticity against FBR e-Invoicing portal.<br/>"
-            f"FBR Ref: {invoice.fbr_invoice_number or 'Pending'}<br/>"
-            "Issued in accordance with Sales Tax Rules, 2006."
-            "</font>"
+            ("<b>FBR Accepted Invoice</b><br/>" if verified_production else
+             "<b>Demo / Sandbox — Not a Production FBR Registration</b><br/>" if fbr_accepted else
+             "<b>FBR Verification Pending</b><br/>")
+            + "<font size='6.5' color='#64748B'>"
+            + (f"FBR Ref: {invoice.fbr_invoice_number}<br/>" if fbr_accepted else "No official FBR reference issued.<br/>")
+            + "Only an actual FBR acceptance confirms fiscal registration."
+            + "</font>"
         )
 
         qr_block_data = [

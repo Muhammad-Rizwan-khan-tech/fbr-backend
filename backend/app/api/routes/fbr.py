@@ -15,6 +15,8 @@ from backend.app.schemas.fbr import (
 )
 from backend.app.services.fbr_service import FBRService
 from backend.app.adapters.factory import FBRAdapterFactory
+from backend.app.services.fbr_verification_service import check_fbr_token
+from backend.app.core.config import settings as app_settings
 
 router = APIRouter(prefix="/fbr", tags=["FBR Submission Center"])
 
@@ -77,9 +79,12 @@ def get_fbr_status(
         FBRSubmission.status == "VALID"
     ).count()
 
-    adapter_name = "MockFBRAdapter" if fbr_mode in ("DEMO", "MOCK") else "LicensedIntegratorAdapter"
-    if cred and cred.provider:
-        adapter_name = f"{cred.provider}Adapter"
+    adapter_name = {
+        "DEMO": "MockFBRAdapter",
+        "MOCK": "MockFBRAdapter",
+        "SANDBOX": "SandboxFBRAdapter",
+        "PRODUCTION": "ProductionFBRAdapter",
+    }.get((fbr_mode or "DEMO").upper(), "Unknown")
 
     return FBRStatusResponse(
         is_connected=is_connected,
@@ -152,35 +157,56 @@ def test_fbr_connection(
     tenant: Organization = Depends(get_current_tenant),
     db: Session = Depends(get_db)
 ):
-    settings = db.query(OrganizationSettings).filter(
+    tenant_settings = db.query(OrganizationSettings).filter(
         OrganizationSettings.organization_id == tenant.id
     ).first()
-    fbr_mode = settings.fbr_mode if settings else "DEMO"
-    cred = db.query(FBRCredential).filter(FBRCredential.organization_id == tenant.id).first()
-    adapter = FBRAdapterFactory.get_adapter(fbr_mode, tenant_settings=settings)
-    probe_result = adapter.test_connection()
+    fbr_mode = (tenant_settings.fbr_mode if tenant_settings else "DEMO").upper()
+    cred = db.query(FBRCredential).filter(
+        FBRCredential.organization_id == tenant.id,
+        FBRCredential.is_active.is_(True),
+    ).first()
+
+    if fbr_mode in ("SANDBOX", "PRODUCTION"):
+        token = (cred.get_auth_token() or cred.get_api_key()) if cred else None
+        token = token or (tenant_settings.fbr_api_token if tenant_settings else None) or app_settings.FBR_API_KEY
+        probe_result = check_fbr_token(token or "")
+    else:
+        probe_result = {
+            "success": False,
+            "status": "NOT_APPLICABLE",
+            "message": "DEMO mode does not verify credentials against FBR",
+            "latency_ms": 0,
+        }
 
     now = datetime.now(timezone.utc)
     if cred:
         cred.last_tested_at = now
-        if probe_result.get("success"):
+        cred.environment = fbr_mode
+        if probe_result["success"]:
             cred.last_success_at = now
             cred.status = "VERIFIED"
             cred.last_error = None
         else:
             cred.last_failed_at = now
-            msg = str(probe_result.get("message", "Connection failed"))
-            cred.status = "AUTH_FAILED" if "auth" in msg.lower() or "401" in msg or "403" in msg else "CONNECTION_UNAVAILABLE"
-            cred.last_error = msg
+            cred.status = (
+                "AUTH_FAILED" if probe_result["status"] == "AUTH_FAILED"
+                else "CONFIGURED_NOT_VERIFIED" if probe_result["status"] == "NOT_APPLICABLE"
+                else "CONNECTION_UNAVAILABLE"
+            )
+            cred.last_error = probe_result["message"]
         db.commit()
 
     return FBRTestConnectionResponse(
-        status=probe_result.get("status", "ONLINE"),
+        status=probe_result["status"],
         environment=fbr_mode,
-        message=probe_result.get("message", f"Connected to FBR [{fbr_mode}] gateway"),
-        success=probe_result.get("success", True),
-        latency_ms=probe_result.get("latency_ms", 0),
-        details=probe_result
+        message=probe_result["message"],
+        success=probe_result["success"],
+        latency_ms=probe_result["latency_ms"],
+        details={
+            "official_reference_verified": probe_result["success"],
+            "endpoint": "FBR /pdi/v1/provinces",
+            "is_simulated": False,
+        },
     )
 
 

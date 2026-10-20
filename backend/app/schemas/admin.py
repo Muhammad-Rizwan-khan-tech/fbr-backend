@@ -159,6 +159,7 @@ class AdminUpdateClientRequest(BaseModel):
 
 class AdminUpdateClientFBRTokenRequest(BaseModel):
     fbr_api_token: str = Field(..., min_length=1, description="New PRAL-issued FBR API authorization token")
+    environment: Optional[str] = Field(None, pattern="^(SANDBOX|PRODUCTION)$", description="Required for changing operating environment; unchanged when omitted")
 
 
 class AdminClientListItem(BaseModel):
