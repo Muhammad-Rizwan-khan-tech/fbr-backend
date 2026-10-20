@@ -78,6 +78,11 @@ class FBRAdapterFactory:
             token = auth_token or api_key
 
             prov_upper = provider.upper()
+            # Legacy admin-created PRAL clients used a placeholder integrator
+            # that simulates responses. Use the native gateway adapter selected
+            # by the actual credential environment instead.
+            if prov_upper == "PRAL" and credential.environment in ("SANDBOX", "PRODUCTION"):
+                prov_upper = credential.environment
             if prov_upper in ("DEMO", "MOCK"):
                 return MockFBRAdapter(forced_scenario=forced_scenario)
             elif prov_upper == "SANDBOX":
