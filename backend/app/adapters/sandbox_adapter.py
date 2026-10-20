@@ -43,6 +43,12 @@ class SandboxFBRAdapter(FBRAdapter):
     ):
         raw_url = (base_url or settings.FBR_API_URL or DEFAULT_BASE_URL).rstrip("/")
         raw_url = re.sub(r"/api/v1/Invoice.*$", "", raw_url)
+        # Both official FBR DI environments share the gw.fbr.gov.pk host.
+        # Do not append a DI route to a stale FBR_API_URL path (e.g. /imfs/...).
+        from urllib.parse import urlsplit
+        parsed = urlsplit(raw_url)
+        if parsed.netloc.lower() == "gw.fbr.gov.pk":
+            raw_url = f"{parsed.scheme}://{parsed.netloc}"
         self.base_url = raw_url
         self.bearer_token = bearer_token or settings.FBR_API_KEY or ""
         self.pos_id = pos_id or "10001"
