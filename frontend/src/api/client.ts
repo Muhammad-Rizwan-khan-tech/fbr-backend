@@ -120,3 +120,26 @@ export async function apiFetch<T>(endpoint: string, options: RequestInit = {}): 
 
   return response.json();
 }
+
+
+/** Authenticated image transport for protected invoice QR endpoints. */
+export async function apiFetchImage(endpoint: string): Promise<Blob> {
+  const token = localStorage.getItem('token');
+  if (!token) throw new Error('Sign in to view an invoice QR code');
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const response = await fetch(`${getApiBaseUrl()}/api/v1${cleanEndpoint}`, {
+    headers: { Authorization: `Bearer ${token}`, Accept: 'image/png' },
+    cache: 'no-store',
+  });
+  if (!response.ok) {
+    let message = `QR request failed (HTTP ${response.status})`;
+    try {
+      const result = await response.json();
+      if (typeof result.detail === 'string') message = result.detail;
+    } catch { /* May not be JSON. */ }
+    throw new Error(message);
+  }
+  const image = await response.blob();
+  if (!image.type.startsWith('image/')) throw new Error('QR endpoint returned non-image content');
+  return image;
+}
