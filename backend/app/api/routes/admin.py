@@ -762,8 +762,8 @@ def create_client(
     # 4. Store FBR API Token Encrypted via AES-256-GCM
     cred = FBRCredential(
         organization_id=org.id,
-        environment="PRODUCTION",
-        provider="PRAL",
+        environment="SANDBOX",
+        provider="SANDBOX",
         status="CONFIGURED_NOT_VERIFIED",
     )
     cred.set_credentials(
@@ -1132,20 +1132,34 @@ def update_client_fbr_token(
     if not org:
         raise HTTPException(status_code=404, detail="Client organization not found")
 
-    cred = db.query(FBRCredential).filter(FBRCredential.organization_id == client_id).first()
+    org_settings = db.query(OrganizationSettings).filter(
+        OrganizationSettings.organization_id == client_id
+    ).first()
+    if not org_settings:
+        org_settings = OrganizationSettings(organization_id=client_id)
+        db.add(org_settings)
+
+    # Keep an existing explicit environment unless the admin requests a change.
+    mode = (req.environment or org_settings.fbr_mode or "SANDBOX").upper()
+    if mode not in ("SANDBOX", "PRODUCTION"):
+        mode = "SANDBOX"
+    org_settings.fbr_mode = mode
+    org_settings.fbr_api_token = None  # Never persist token in plaintext settings.
+
+    cred = db.query(FBRCredential).filter(
+        FBRCredential.organization_id == client_id
+    ).first()
     if not cred:
-        cred = FBRCredential(
-            organization_id=client_id,
-            environment="PRODUCTION",
-            provider="PRAL",
-        )
+        cred = FBRCredential(organization_id=client_id)
         db.add(cred)
 
-    cred.set_credentials(
-        auth_token=fbr_token,
-        api_key=fbr_token,
-    )
+    cred.environment = mode
+    cred.provider = mode
+    cred.is_active = True
+    cred.set_credentials(auth_token=fbr_token, api_key=fbr_token)
     cred.status = "CONFIGURED_NOT_VERIFIED"
+    cred.last_success_at = None
+    cred.last_tested_at = None
     cred.token_rotated_at = now_utc()
     cred.last_error = None
 
