@@ -157,20 +157,23 @@ def test_fbr_connection(
     ).first()
     fbr_mode = settings.fbr_mode if settings else "DEMO"
     cred = db.query(FBRCredential).filter(FBRCredential.organization_id == tenant.id).first()
-    adapter = FBRAdapterFactory.get_adapter(fbr_mode, tenant_settings=settings)
-    probe_result = adapter.test_connection()
+    from backend.app.services.fbr_connection_service import probe_pral_reference
+    if fbr_mode.upper() in ("DEMO", "MOCK"):
+        raise HTTPException(status_code=409, detail="DEMO mode cannot verify official FBR connectivity.")
+    token = (cred.get_auth_token() or cred.get_api_key()) if cred and cred.is_active else ""
+    probe_result = probe_pral_reference(token, environment=fbr_mode)
 
     now = datetime.now(timezone.utc)
     if cred:
         cred.last_tested_at = now
         if probe_result.get("success"):
             cred.last_success_at = now
-            cred.status = "VERIFIED"
+            cred.status = "HEALTHY"
             cred.last_error = None
         else:
             cred.last_failed_at = now
             msg = str(probe_result.get("message", "Connection failed"))
-            cred.status = "AUTH_FAILED" if "auth" in msg.lower() or "401" in msg or "403" in msg else "CONNECTION_UNAVAILABLE"
+            cred.status = "AUTH_FAILED" if probe_result.get("status") == "AUTH_FAILED" else "CONNECTION_UNAVAILABLE"
             cred.last_error = msg
         db.commit()
 
@@ -178,7 +181,7 @@ def test_fbr_connection(
         status=probe_result.get("status", "ONLINE"),
         environment=fbr_mode,
         message=probe_result.get("message", f"Connected to FBR [{fbr_mode}] gateway"),
-        success=probe_result.get("success", True),
+        success=probe_result.get("success", False),
         latency_ms=probe_result.get("latency_ms", 0),
         details=probe_result
     )
