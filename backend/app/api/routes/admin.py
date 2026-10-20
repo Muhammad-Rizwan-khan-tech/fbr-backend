@@ -740,7 +740,7 @@ def create_client(
     settings_obj = OrganizationSettings(
         organization_id=org.id,
         invoice_prefix="INV",
-        fbr_mode="PRODUCTION",
+        fbr_mode="SANDBOX",
     )
     db.add(settings_obj)
 
