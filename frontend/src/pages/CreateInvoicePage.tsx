@@ -37,6 +37,12 @@ export const CreateInvoicePage: React.FC<CreateInvoicePageProps> = ({ onBack, on
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [fbrMode, setFbrMode] = useState('DEMO');
+  const [sandboxScenario, setSandboxScenario] = useState('');
+  const [scenarios, setScenarios] = useState<Array<{scenario_id: string; name: string; description: string; sale_type: string}>>([]);
+  const [hsSearch, setHsSearch] = useState('');
+  const [hsOptions, setHsOptions] = useState<Array<{code: string; description: string; label: string}>>([]);
+  const [hsSource, setHsSource] = useState('Loading HS catalog...');
 
   // Form State
   const [selectedBranchId, setSelectedBranchId] = useState('');
@@ -65,11 +71,13 @@ export const CreateInvoicePage: React.FC<CreateInvoicePageProps> = ({ onBack, on
   useEffect(() => {
     async function loadMasterData() {
       try {
-        const [bList, cList, pList] = await Promise.all([
+        const [bList, cList, pList, org] = await Promise.all([
           masterApi.getBranches(),
           masterApi.getCustomers(),
           masterApi.getProducts(),
+          masterApi.getOrganization(),
         ]);
+        setFbrMode(org.settings?.fbr_mode || 'DEMO');
         setBranches(bList);
         setCustomers(cList);
         setProducts(pList);
@@ -99,7 +107,31 @@ export const CreateInvoicePage: React.FC<CreateInvoicePageProps> = ({ onBack, on
       }
     }
     loadMasterData();
+    masterApi.getSandboxScenarios().then(setScenarios).catch(() => setScenarios([]));
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const result = await masterApi.getFbrItemCodes(hsSearch);
+        if (!active) return;
+        setHsOptions(result.items || []);
+        setHsSource(result.official_live_verified ? 'Official PRAL live catalog' : 'Demo/cached HS catalog — not live verified');
+      } catch {
+        try {
+          const fallback = await masterApi.getHSCodes(hsSearch);
+          if (active) {
+            setHsOptions(fallback.map(code => ({ code: code.code, description: code.description, label: code.description })));
+            setHsSource('Local HS catalog only (PRAL not verified)');
+          }
+        } catch {
+          if (active) setHsSource('HS catalog unavailable — enter verified HS code manually');
+        }
+      }
+    }, 350);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [hsSearch]);
 
   const handleProductSelect = (index: number, productId: string) => {
     const prod = products.find((p) => p.id === productId);
@@ -186,9 +218,15 @@ export const CreateInvoicePage: React.FC<CreateInvoicePageProps> = ({ onBack, on
       return;
     }
 
+    if (andSubmitToFBR && fbrMode === 'SANDBOX' && !sandboxScenario) {
+      alert('Select the applicable PRAL Sandbox Scenario before sending.');
+      return;
+    }
+
     setSubmitting(true);
     try {
       const payload = {
+        scenario_id: fbrMode === 'SANDBOX' ? sandboxScenario || undefined : undefined,
         branch_id: selectedBranchId,
         customer_id: selectedCustomerId,
         invoice_type: invoiceType,
@@ -213,7 +251,10 @@ export const CreateInvoicePage: React.FC<CreateInvoicePageProps> = ({ onBack, on
       const createdInvoice = await invoicesApi.createInvoice(payload);
 
       if (andSubmitToFBR) {
-        await invoicesApi.submitToFBR(createdInvoice.id, 'AUTO');
+        const submission = await invoicesApi.submitToFBR(createdInvoice.id, 'AUTO');
+        if (submission.status !== 'VALID') {
+          alert(`Invoice saved, but FBR did not accept it: ${submission.error_message || submission.status}. You can inspect the submission and retry after correcting the issue.`);
+        }
       }
 
       onSuccess(createdInvoice.id);
@@ -298,6 +339,24 @@ export const CreateInvoicePage: React.FC<CreateInvoicePageProps> = ({ onBack, on
             </select>
           </div>
 
+          {fbrMode === 'SANDBOX' && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">PRAL Sandbox Scenario (required for submission)</label>
+              <select
+                value={sandboxScenario}
+                onChange={e => setSandboxScenario(e.target.value)}
+                className="w-full px-3 py-2 text-xs border border-amber-300 rounded-lg bg-white"
+              >
+                <option value="">Choose applicable SN001–SN028 scenario</option>
+                {scenarios.map(item => (
+                  <option key={item.scenario_id} value={item.scenario_id}>
+                    {item.scenario_id} — {item.name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-amber-700 mt-1">{scenarios.find(x => x.scenario_id === sandboxScenario)?.description || 'Choose the scenario matching your buyer and business activity.'}</p>
+            </div>
+          )}
           <div>
             <label className="block text-xs font-semibold text-slate-700 mb-1">Reference / PO #</label>
             <input
@@ -383,6 +442,7 @@ export const CreateInvoicePage: React.FC<CreateInvoicePageProps> = ({ onBack, on
           <div>
             <h3 className="text-sm font-bold text-slate-900">Line Items & FBR Tax Classification</h3>
             <p className="text-xs text-slate-400 mt-0.5">Pakistan HS codes, unit prices, discounts, and sales tax rate breakdown</p>
+            <p className="text-[11px] text-amber-700 mt-1">{hsSource}</p>
           </div>
           <button
             onClick={handleAddLine}
@@ -443,7 +503,12 @@ export const CreateInvoicePage: React.FC<CreateInvoicePageProps> = ({ onBack, on
                       <input
                         type="text"
                         value={item.hs_code}
-                        onChange={(e) => handleLineChange(idx, 'hs_code', e.target.value)}
+                        list="fbr-pral-hs-code-options"
+                        onFocus={() => setHsSearch(item.hs_code)}
+                        onChange={(e) => {
+                          handleLineChange(idx, 'hs_code', e.target.value);
+                          setHsSearch(e.target.value);
+                        }}
                         placeholder="8471.30.10"
                         className="w-full px-2 py-1.5 text-xs border border-slate-200 rounded font-mono font-medium"
                       />
@@ -525,6 +590,12 @@ export const CreateInvoicePage: React.FC<CreateInvoicePageProps> = ({ onBack, on
             </tbody>
           </table>
         </div>
+
+        <datalist id="fbr-pral-hs-code-options">
+          {hsOptions.map(option => (
+            <option key={option.code} value={option.code} label={option.description} />
+          ))}
+        </datalist>
 
         {/* Totals Summary */}
         <div className="border-t border-slate-100 pt-6 flex justify-end">
