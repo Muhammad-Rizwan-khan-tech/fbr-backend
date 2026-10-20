@@ -43,6 +43,22 @@ export const masterApi = {
     return apiFetch('/tax/uoms');
   },
 
+  getFbrItemCodes: async (search: string = ''): Promise<{
+    items: Array<{ code: string; description: string; label: string }>;
+    source?: string;
+    official_live_verified?: boolean;
+  }> => {
+    const params = new URLSearchParams({ limit: '100' });
+    if (search.trim()) params.set('search', search.trim());
+    return apiFetch(`/fbr/references/item-codes?${params.toString()}`);
+  },
+
+  getSandboxScenarios: async (): Promise<Array<{
+    scenario_id: string; name: string; description: string; sale_type: string;
+  }>> => {
+    return apiFetch('/reference/fbr/scenarios');
+  },
+
   getOrganization: async (): Promise<Organization> => {
     return apiFetch<Organization>('/organization');
   },
