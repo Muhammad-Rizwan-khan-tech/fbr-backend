@@ -150,11 +150,27 @@ class AdminCreateClientRequest(BaseModel):
     company_name: str = Field(..., min_length=2, max_length=255, description="Client legal / company name")
     username: str = Field(..., min_length=3, max_length=50, description="Client unique username for desktop terminal")
     fbr_api_token: str = Field(..., min_length=1, description="PRAL-issued FBR API authorization token")
+    # Optional for backwards-compatible 3-field client creation. Missing details
+    # remain *unconfigured*, never invented using a placeholder NTN or address.
+    ntn: Optional[str] = Field(None, max_length=20)
+    strn: Optional[str] = Field(None, max_length=30)
+    province: Optional[str] = Field(None, max_length=100)
+    city: Optional[str] = Field(None, max_length=100)
+    address: Optional[str] = Field(None, max_length=500)
+    fbr_pos_id: Optional[str] = Field(None, max_length=50)
+    business_activity: Optional[str] = Field(None, max_length=100)
 
 
 class AdminUpdateClientRequest(BaseModel):
     company_name: Optional[str] = Field(None, min_length=2, max_length=255)
     username: Optional[str] = Field(None, min_length=3, max_length=50)
+    ntn: Optional[str] = Field(None, max_length=20)
+    strn: Optional[str] = Field(None, max_length=30)
+    province: Optional[str] = Field(None, max_length=100)
+    city: Optional[str] = Field(None, max_length=100)
+    address: Optional[str] = Field(None, max_length=500)
+    fbr_pos_id: Optional[str] = Field(None, max_length=50)
+    business_activity: Optional[str] = Field(None, max_length=100)
 
 
 class AdminUpdateClientFBRTokenRequest(BaseModel):

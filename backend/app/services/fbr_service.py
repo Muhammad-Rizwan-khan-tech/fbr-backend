@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from backend.app.core.errors import ConflictError, NotFoundError, AppError
 from backend.app.core.context import execution_context
 from backend.app.core.config import settings as app_settings
+from backend.app.core.fbr_taxpayer import normalize_seller_tax_id, is_incomplete_tax_profile
 from backend.app.models.tenant import OrganizationSettings
 from backend.app.models.fbr_credential import FBRCredential
 from backend.app.models.invoice import Invoice, InvoiceStatus, FBRSubmissionStatus
@@ -118,6 +119,12 @@ class FBRService:
         buyer_ntn_cnic = invoice.buyer_ntn or invoice.buyer_cnic or ""
         date_str = invoice.invoice_date.strftime("%Y-%m-%d") if invoice.invoice_date else datetime.now(timezone.utc).strftime("%Y-%m-%d")
         scen_id = getattr(invoice, "scenario_id", None)
+        try:
+            seller_tax_id = normalize_seller_tax_id(invoice.seller_ntn)
+        except ValueError:
+            # Invalid legacy snapshots remain visibly invalid for review;
+            # actual Sandbox/Production transmission is blocked below.
+            seller_tax_id = str(invoice.seller_ntn or "").strip()
 
         return {
             "invoice_number": invoice.invoice_number,
@@ -125,8 +132,8 @@ class FBRService:
             "invoiceType": official_inv_type,
             "invoice_date": date_str,
             "invoiceDate": date_str,
-            "seller_ntn": invoice.seller_ntn,
-            "sellerNTNCNIC": invoice.seller_ntn,
+            "seller_ntn": seller_tax_id,
+            "sellerNTNCNIC": seller_tax_id,
             "seller_strn": invoice.seller_strn,
             "seller_name": invoice.seller_name,
             "sellerBusinessName": invoice.seller_name,
@@ -199,6 +206,17 @@ class FBRService:
             raise HTTPException(status_code=409, detail="FBR adapter does not match the selected live gateway mode.")
 
         payload = cls._build_fbr_payload(invoice, db=db)
+        if fbr_mode in ("SANDBOX", "PRODUCTION") and is_incomplete_tax_profile(
+            payload.get("sellerNTNCNIC"), payload.get("sellerAddress"), payload.get("sellerProvince")
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Seller taxpayer profile is incomplete or contains a default NTN/address. "
+                    "Correct the client's NTN, province and full address in admin, "
+                    "then create a new invoice. No FBR request was sent."
+                ),
+            )
         if fbr_mode == "SANDBOX" and not payload.get("scenarioId"):
             raise HTTPException(status_code=422, detail="Choose an FBR Sandbox scenario (SN001–SN028) before submission.")
 
