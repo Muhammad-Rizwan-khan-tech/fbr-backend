@@ -12,6 +12,7 @@ from backend.app.core.security import get_password_hash
 from backend.app.models.base import now_utc
 from backend.app.models.tenant import Organization, OrganizationSettings, OrgStatus
 from backend.app.models.taxpayer import Taxpayer
+from backend.app.core.fbr_taxpayer import normalize_seller_tax_id, is_incomplete_tax_profile
 from backend.app.models.branch import Branch
 from backend.app.models.user import User, UserRole
 from backend.app.models.license import License, LicenseStatus, ActivationKey, ActivationKeyStatus
@@ -729,16 +730,28 @@ def create_client(
     db.add(org)
     db.flush()
 
-    # 2. Create Taxpayer Profile & Default Branch
+    # Real profile supplied by the admin. Legacy 3-field callers create an
+    # incomplete profile rather than a fabricated seller NTN/address.
+    try:
+        seller_id = normalize_seller_tax_id(req.ntn)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    province = (req.province or "").strip()
+    city = (req.city or "").strip()
+    address = (req.address or "").strip()
+    pos_id = (req.fbr_pos_id or "").strip() or None
+    activity = (req.business_activity or "OTHER").strip().upper()
     taxpayer = Taxpayer(
         tenant_id=org.id,
         legal_name=company_name,
         trade_name=company_name,
-        ntn="1000000-0",
-        province="Punjab",
-        city="Lahore",
-        address="Pakistan",
-        business_activity="MANUFACTURER",
+        ntn=seller_id,
+        strn=(req.strn or "").strip() or None,
+        province=province,
+        city=city,
+        address=address,
+        business_activity=activity,
+        business_type=activity,
     )
     db.add(taxpayer)
 
@@ -746,9 +759,10 @@ def create_client(
         tenant_id=org.id,
         branch_name="Head Office",
         branch_code="HO-01",
-        address="Pakistan",
-        city="Lahore",
-        province="Punjab",
+        fbr_pos_id=pos_id,
+        address=address,
+        city=city,
+        province=province,
         is_main=True,
         is_active=True,
     )
@@ -758,6 +772,7 @@ def create_client(
         organization_id=org.id,
         invoice_prefix="INV",
         fbr_mode="SANDBOX",
+        fbr_pos_id=pos_id,
     )
     db.add(settings_obj)
 
@@ -782,6 +797,7 @@ def create_client(
         environment="SANDBOX",
         provider="SANDBOX",
         status="CONFIGURED_NOT_VERIFIED",
+        fbr_pos_id=pos_id,
     )
     cred.set_credentials(
         auth_token=fbr_token,
@@ -895,6 +911,14 @@ def list_clients(
             "company_name": o.name,
             "username": username,
             "fbr_status": fbr_status,
+            "tax_profile_complete": not is_incomplete_tax_profile(
+                o.taxpayer.ntn if o.taxpayer else None,
+                o.taxpayer.address if o.taxpayer else None,
+                o.taxpayer.province if o.taxpayer else None,
+            ),
+            "ntn": o.taxpayer.ntn if o.taxpayer else None,
+            "province": o.taxpayer.province if o.taxpayer else None,
+            "city": o.taxpayer.city if o.taxpayer else None,
             "fbr_environment": cred.environment if cred else "NOT_CONFIGURED",
             "fbr_last_tested_at": cred.last_tested_at.isoformat() if cred and cred.last_tested_at else None,
             "fbr_last_error": cred.last_error if cred else None,
@@ -967,6 +991,19 @@ def get_client(
         "email": client_user.email if client_user else None,
         "status": org.status,
         "fbr_status": fbr_status,
+        "ntn": org.taxpayer.ntn if org.taxpayer else None,
+        "strn": org.taxpayer.strn if org.taxpayer else None,
+        "province": org.taxpayer.province if org.taxpayer else None,
+        "city": org.taxpayer.city if org.taxpayer else None,
+        "address": org.taxpayer.address if org.taxpayer else None,
+        "business_activity": org.taxpayer.business_activity if org.taxpayer else None,
+        "fbr_pos_id": next((br.fbr_pos_id for br in org.branches if br.is_main), None)
+            or (cred.fbr_pos_id if cred else None),
+        "tax_profile_complete": not is_incomplete_tax_profile(
+            org.taxpayer.ntn if org.taxpayer else None,
+            org.taxpayer.address if org.taxpayer else None,
+            org.taxpayer.province if org.taxpayer else None,
+        ),
         "fbr_environment": cred.environment if cred else "NOT_CONFIGURED",
         "fbr_last_tested_at": cred.last_tested_at.isoformat() if cred and cred.last_tested_at else None,
         "fbr_last_error": cred.last_error if cred else None,
@@ -1010,6 +1047,14 @@ def update_client(
         raise HTTPException(status_code=404, detail="Client organization not found")
 
     client_user = db.query(User).filter(User.tenant_id == org.id).first()
+    taxpayer = db.query(Taxpayer).filter(Taxpayer.tenant_id == org.id).first()
+    branch = db.query(Branch).filter(
+        Branch.tenant_id == org.id, Branch.is_main.is_(True)
+    ).first() or db.query(Branch).filter(Branch.tenant_id == org.id).first()
+    cred = db.query(FBRCredential).filter(FBRCredential.organization_id == org.id).first()
+    org_settings = db.query(OrganizationSettings).filter(
+        OrganizationSettings.organization_id == org.id
+    ).first()
 
     if req.username:
         new_username = req.username.strip().lower()
@@ -1031,6 +1076,45 @@ def update_client(
         if org.taxpayer:
             org.taxpayer.legal_name = new_name
             org.taxpayer.trade_name = new_name
+
+    if req.ntn is not None:
+        try:
+            cleaned = normalize_seller_tax_id(req.ntn)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        if not cleaned:
+            raise HTTPException(status_code=422, detail="Seller NTN/CNIC cannot be blank")
+        if taxpayer:
+            taxpayer.ntn = cleaned
+    if req.strn is not None and taxpayer:
+        taxpayer.strn = req.strn.strip() or None
+
+    for key in ("province", "city", "address"):
+        value = getattr(req, key)
+        if value is not None:
+            cleaned = value.strip()
+            if not cleaned:
+                raise HTTPException(status_code=422, detail=f"{key} cannot be blank")
+            if taxpayer:
+                setattr(taxpayer, key, cleaned)
+            if branch:
+                setattr(branch, key, cleaned)
+
+    if req.business_activity is not None and taxpayer:
+        activity = req.business_activity.strip().upper()
+        if not activity:
+            raise HTTPException(status_code=422, detail="business_activity cannot be blank")
+        taxpayer.business_activity = activity
+        taxpayer.business_type = activity
+
+    if req.fbr_pos_id is not None:
+        pos = req.fbr_pos_id.strip() or None
+        if branch:
+            branch.fbr_pos_id = pos
+        if cred:
+            cred.fbr_pos_id = pos
+        if org_settings:
+            org_settings.fbr_pos_id = pos
 
     audit = AdminAuditLog(
         admin_identity=admin,
