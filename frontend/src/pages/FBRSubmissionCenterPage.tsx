@@ -163,7 +163,7 @@ export const FBRSubmissionCenterPage: React.FC = () => {
                         >
                           Audit Details
                         </button>
-                        {(sub.status === 'FAILED' || sub.status === 'INVALID' || sub.is_retryable) && (
+                        {sub.is_retryable && (
                           <button
                             onClick={() => handleRetry(sub.id)}
                             disabled={retryingId === sub.id}
