@@ -51,9 +51,9 @@ def _safe_gateway_error(value: Any) -> str:
         add(value)
     message = "; ".join(dict.fromkeys(fragments))
     # Never return bearer credentials or structured credential assignments in audit data.
-    message = re.sub(r"(?i)Bearer\\s+[^\\s,;]+", "Bearer [REDACTED]", message)
+    message = re.sub(r"(?i)Bearer\s+[^\s,;]+", "Bearer [REDACTED]", message)
     message = re.sub(
-        r"(?i)(?:api[_ -]?key|access[_ -]?token|authorization|password)\\s*[:=]\\s*[^\\s,;]+",
+        r"(?i)(?:api[_ -]?key|access[_ -]?token|authorization|password)\s*[:=]\s*[^\s,;]+",
         "[REDACTED_CREDENTIAL]", message,
     )
     return message[:450]
