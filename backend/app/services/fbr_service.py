@@ -168,6 +168,21 @@ class FBRService:
             "items": items_payload,
         }
 
+    @staticmethod
+    def _observed_http_status(adapter_response) -> Optional[int]:
+        """Only record HTTP response codes provided by the real adapter.
+
+        Older code invented HTTP 400 for every failure, including connection
+        errors and local validation that never reached the FBR gateway.
+        """
+        raw = adapter_response.raw_response or {}
+        observed = raw.get("http_status") or raw.get("status_code")
+        try:
+            status = int(observed)
+            return status if 100 <= status <= 599 else None
+        except (TypeError, ValueError):
+            return None
+
     @classmethod
     def submit_invoice(
         cls,
@@ -255,7 +270,7 @@ class FBRService:
             attempt_number=1,
             request_data=json.dumps(payload),
             response_data=json.dumps(adapter_res.raw_response),
-            http_status_code=200 if adapter_res.success else 400,
+            http_status_code=cls._observed_http_status(adapter_res),
             status=adapter_res.status,
             error_message=adapter_res.error_message,
             latency_ms=latency
@@ -323,10 +338,37 @@ class FBRService:
         if not invoice:
             raise HTTPException(status_code=404, detail="Associated invoice not found")
 
-        # For retry, we clear any transient failure scenario and perform standard submission
-        cred = db.query(FBRCredential).filter(FBRCredential.organization_id == invoice.tenant_id).first()
-        adapter = FBRAdapterFactory.get_adapter_for_tenant(credential=cred, forced_scenario="VALID")
+        # Retry only transient failures. Do not replay 4xx/validation failures,
+        # or switch gateway mode/force a fake "VALID" scenario.
+        if not submission.is_retryable:
+            raise HTTPException(
+                status_code=409,
+                detail="Submission error is not retryable. Correct the invoice or FBR configuration and create a new draft.",
+            )
+        if submission.status == "VALID" or invoice.fbr_status == FBRSubmissionStatus.VALID.value:
+            raise HTTPException(status_code=409, detail="Invoice is already accepted by FBR")
+
+        tenant_settings = db.query(OrganizationSettings).filter(
+            OrganizationSettings.organization_id == invoice.tenant_id
+        ).first()
+        fbr_mode = (tenant_settings.fbr_mode if tenant_settings else "DEMO").upper()
+        cred = db.query(FBRCredential).filter(
+            FBRCredential.organization_id == invoice.tenant_id,
+            FBRCredential.is_active.is_(True),
+        ).first()
+        if fbr_mode in ("SANDBOX", "PRODUCTION") and not (
+            cred and (cred.get_auth_token() or cred.get_api_key())
+        ):
+            raise HTTPException(status_code=409, detail="FBR token is missing; no retry sent.")
+
+        adapter = FBRAdapterFactory.get_adapter_for_tenant(
+            credential=cred, tenant_settings=tenant_settings, forced_scenario="AUTO"
+        )
         payload = cls._build_fbr_payload(invoice, db=db)
+        if fbr_mode in ("SANDBOX", "PRODUCTION") and is_incomplete_tax_profile(
+            payload.get("sellerNTNCNIC"), payload.get("sellerAddress"), payload.get("sellerProvince")
+        ):
+            raise HTTPException(status_code=422, detail="Invoice contains incomplete seller details; create a corrected draft.")
 
         start_time = time.time()
         adapter_res = adapter.submit_invoice(payload)
@@ -348,7 +390,7 @@ class FBRService:
             attempt_number=submission.retry_count + 1,
             request_data=json.dumps(payload),
             response_data=json.dumps(adapter_res.raw_response),
-            http_status_code=200 if adapter_res.success else 400,
+            http_status_code=cls._observed_http_status(adapter_res),
             status=adapter_res.status,
             error_message=adapter_res.error_message,
             latency_ms=latency
