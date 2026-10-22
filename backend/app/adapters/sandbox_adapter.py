@@ -19,6 +19,46 @@ SANDBOX_SUBMIT_PATH = "/di_data/v1/di/postinvoicedata_sb"
 SANDBOX_VALIDATE_PATH = "/di_data/v1/di/validateinvoicedata_sb"
 
 
+def _safe_gateway_error(value: Any) -> str:
+    """Extract meaningful FBR errors without exposing credentials or response dumps."""
+    fragments: List[str] = []
+
+    def add(candidate: Any) -> None:
+        if isinstance(candidate, str) and candidate.strip():
+            fragments.append(candidate.strip())
+        elif isinstance(candidate, list):
+            for item in candidate[:5]:
+                add(item)
+        elif isinstance(candidate, dict):
+            for key in ("errorCode", "error_code", "code"):
+                if candidate.get(key) is not None:
+                    add(str(candidate[key]))
+                    break
+            for key in ("error", "errorMessage", "message", "detail", "description", "errors"):
+                if key in candidate:
+                    add(candidate[key])
+                    break
+
+    if isinstance(value, dict):
+        for key in ("validationResponse", "ValidationResponse", "validation_response"):
+            section = value.get(key)
+            if isinstance(section, dict):
+                add(section.get("error"))
+                add(section.get("invoiceStatuses"))
+        for key in ("errorMessage", "message", "detail", "error", "errors"):
+            add(value.get(key))
+    elif isinstance(value, str) and not value.lstrip().startswith("<"):
+        add(value)
+    message = "; ".join(dict.fromkeys(fragments))
+    # Never return bearer credentials or structured credential assignments in audit data.
+    message = re.sub(r"(?i)Bearer\\s+[^\\s,;]+", "Bearer [REDACTED]", message)
+    message = re.sub(
+        r"(?i)(?:api[_ -]?key|access[_ -]?token|authorization|password)\\s*[:=]\\s*[^\\s,;]+",
+        "[REDACTED_CREDENTIAL]", message,
+    )
+    return message[:450]
+
+
 class SandboxFBRAdapter(FBRAdapter):
     """FBR Sandbox / Staging Digital Invoicing Adapter.
     
@@ -468,38 +508,77 @@ class SandboxFBRAdapter(FBRAdapter):
             try:
                 with httpx.Client(timeout=settings.FBR_HTTP_TIMEOUT_SECONDS, proxy=settings.FIXIE_URL or None, trust_env=not bool(settings.FIXIE_URL)) as client:
                     resp = client.post(endpoint, json=fbr_payload, headers=headers)
-                    if resp.status_code >= 500:
+                    try:
+                        data = resp.json()
+                    except ValueError:
+                        data = None
+                    http_status = resp.status_code
+                    if http_status >= 400:
+                        details = _safe_gateway_error(data)
+                        if not details and data is None:
+                            details = _safe_gateway_error(getattr(resp, "text", ""))
+                        if not details:
+                            details = "Gateway returned no recognized structured error; check FBR access, token and invoice payload."
+                        if http_status in (401, 403):
+                            error_code = f"FBR-SBX-AUTH-{http_status}"
+                            status = "FAILED"
+                        elif http_status == 429:
+                            error_code = "FBR-SBX-HTTP-429"
+                            status = "FAILED"
+                        elif http_status >= 500:
+                            error_code = f"FBR-SBX-HTTP-{http_status}"
+                            status = "FAILED"
+                        else:
+                            error_code = f"FBR-SBX-HTTP-{http_status}"
+                            status = "INVALID"
                         return FBRAdapterResponse(
                             success=False,
-                            status="FAILED",
-                            error_code=f"HTTP-{resp.status_code}",
-                            error_message=f"FBR Sandbox server error: {resp.text[:200]}",
-                            is_retryable=True,
-                            raw_response={"status_code": resp.status_code, "body": resp.text},
+                            status=status,
+                            error_code=error_code,
+                            error_message=f"FBR Sandbox HTTP {http_status}: {details}",
+                            is_retryable=http_status == 429 or http_status >= 500,
+                            raw_response={"http_status": http_status, "error_summary": details},
                             environment=self.environment,
                             provider=self.provider,
                             is_simulated=False,
                         )
-                    return self.parse_response(resp.json())
-            except (httpx.TimeoutException, httpx.NetworkError) as net_err:
-                logger.warning(f"Sandbox HTTP request failed: {net_err}")
+                    if not isinstance(data, dict):
+                        return FBRAdapterResponse(
+                            success=False, status="FAILED",
+                            error_code="FBR-SBX-RESPONSE-FORMAT",
+                            error_message=f"FBR Sandbox HTTP {http_status} returned a non-JSON-object response.",
+                            is_retryable=False,
+                            raw_response={"http_status": http_status, "response_format": "non_object"},
+                            environment=self.environment, provider=self.provider,
+                            is_simulated=False,
+                        )
+                    result = self.parse_response(data)
+                    result.raw_response = {**data, "http_status": http_status}
+                    return result
+            except httpx.RequestError as net_err:
+                logger.warning("Sandbox transport failed: %s", type(net_err).__name__)
+                proxy_error = isinstance(net_err, httpx.ProxyError)
                 return FBRAdapterResponse(
-                    success=False,
-                    status="FAILED",
-                    error_code="NET-SBX-CONN",
-                    error_message=f"Network error connecting to FBR Sandbox: {str(net_err)}",
-                    is_retryable=True,
-                    raw_response={"error": str(net_err)},
+                    success=False, status="FAILED",
+                    error_code="NET-SBX-PROXY" if proxy_error else "NET-SBX-CONN",
+                    error_message=(
+                        "Fixie proxy connection/authentication failed; check configured credentials and host."
+                        if proxy_error else
+                        f"FBR Sandbox transport error ({type(net_err).__name__}); check Fixie and gateway connectivity."
+                    ),
+                    is_retryable=not proxy_error,
+                    raw_response={"error_type": type(net_err).__name__},
                     environment=self.environment,
-                    provider=self.provider,
-                    is_simulated=False,
+                    provider=self.provider, is_simulated=False,
                 )
-            except Exception as e:
-                logger.error("Unexpected FBR Sandbox failure: %s", type(e).__name__)
+            except Exception as exc:
+                logger.exception("Unexpected FBR Sandbox processing exception: %s", type(exc).__name__)
                 return FBRAdapterResponse(
                     success=False, status="FAILED", error_code="NET-SBX-UNEXPECTED",
-                    error_message="Sandbox gateway returned an unexpected response or connection failure",
-                    is_retryable=True, environment=self.environment,
+                    error_message=f"Sandbox response processing error ({type(exc).__name__}). Check backend logs by request ID.",
+                    is_retryable=False,
+                    raw_response={"error_type": type(exc).__name__},
+                    environment=self.environment,
                     provider=self.provider, is_simulated=False,
                 )
 
