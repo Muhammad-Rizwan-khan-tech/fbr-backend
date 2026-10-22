@@ -1,7 +1,9 @@
 """Validated seller NTN/CNIC formatting for PRAL invoice payloads.
 
-A company NTN uses seven digits (optionally followed by a check digit as
-1234567-8); a CNIC uses thirteen digits, optionally with two hyphens.
+FBR DI expects a 7-digit company NTN or a 13-digit CNIC. An NTN entered
+with one trailing check digit may be written as 1234567-8 or 12345678.
+Strip only that single check digit; reject all other invalid lengths instead
+of truncating arbitrary data. This formatting does not verify registration.
 Do not silently truncate malformed values or manufacture an NTN.
 """
 import re
@@ -14,11 +16,15 @@ def normalize_seller_tax_id(value: str | None) -> str:
         return text
     if re.fullmatch(r"\d{7}-\d", text):
         return text[:7]
+    if re.fullmatch(r"\d{8}", text):
+        # Legacy admin panels sometimes remove the NTN check-digit separator.
+        # Convert only the exact 8-digit form into FBR DI's 7-digit NTN field.
+        return text[:7]
     if re.fullmatch(r"\d{13}", text):
         return text
     if re.fullmatch(r"\d{5}-\d{7}-\d", text):
         return text.replace("-", "")
-    raise ValueError("Seller NTN must be 7 digits (optional -check digit) or a 13-digit CNIC")
+    raise ValueError("Seller NTN must be 7 digits (optional eighth check digit) or a 13-digit CNIC")
 
 def is_incomplete_tax_profile(ntn: str | None, address: str | None, province: str | None) -> bool:
     try:
