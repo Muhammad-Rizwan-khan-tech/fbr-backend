@@ -70,6 +70,11 @@ export const SubmissionDetailModal: React.FC<SubmissionDetailModalProps> = ({
             </div>
           )}
 
+          <p className="text-[11px] text-slate-500">
+            Note: older submissions may display synthetic HTTP 400 values. New submissions
+            distinguish real FBR HTTP responses from local validation or transport failures.
+          </p>
+
           {/* Attempt Timeline */}
           <div>
             <h4 className="text-xs font-bold text-slate-700 mb-2">Transmission Attempts Timeline</h4>
@@ -83,7 +88,9 @@ export const SubmissionDetailModal: React.FC<SubmissionDetailModalProps> = ({
                       </div>
                       <div>
                         <div className="font-semibold text-slate-800">
-                          HTTP {att.http_status_code || 200} - {att.status}
+                          {att.http_status_code
+                            ? `Recorded HTTP ${att.http_status_code} - ${att.status}`
+                            : `No upstream HTTP response - ${att.status}`}
                         </div>
                         <div className="text-[11px] text-slate-400">
                           {new Date(att.created_at).toLocaleString()}
@@ -111,7 +118,7 @@ export const SubmissionDetailModal: React.FC<SubmissionDetailModalProps> = ({
           >
             Close
           </button>
-          {onRetry && (submission.status === 'FAILED' || submission.status === 'INVALID' || submission.is_retryable) && (
+          {onRetry && submission.is_retryable && (
             <button
               onClick={() => onRetry(submission.id)}
               disabled={isRetrying}
