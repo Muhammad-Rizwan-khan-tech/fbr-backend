@@ -182,13 +182,6 @@ def fbr_validate_invoice_remote(
         OrganizationSettings.organization_id == tenant.id
     ).first()
     active_mode = (tenant_settings.fbr_mode if tenant_settings else "DEMO").upper()
-    if active_mode not in ("SANDBOX", "PRODUCTION"):
-        raise HTTPException(status_code=409, detail="Select a real SANDBOX or PRODUCTION gateway mode first.")
-    if environment is not None and environment.upper() != active_mode:
-        raise HTTPException(
-            status_code=409,
-            detail="Validation environment does not match the client's configured mode.",
-        )
     cred = db.query(FBRCredential).filter(
         FBRCredential.organization_id == tenant.id,
         FBRCredential.is_active.is_(True),
@@ -196,6 +189,13 @@ def fbr_validate_invoice_remote(
     token = (cred.get_auth_token() or cred.get_api_key()) if cred else None
     if not token:
         raise CredentialsMissingError("The tenant's encrypted FBR token is not configured.")
+    if active_mode not in ("SANDBOX", "PRODUCTION"):
+        raise HTTPException(status_code=409, detail="Select a real SANDBOX or PRODUCTION gateway mode first.")
+    if environment is not None and environment.upper() != active_mode:
+        raise HTTPException(
+            status_code=409,
+            detail="Validation environment does not match the client's configured mode.",
+        )
     canonical = FBRService._build_fbr_payload(invoice, db=db)
     if active_mode == "SANDBOX" and not canonical.get("scenarioId"):
         raise HTTPException(status_code=422, detail="Sandbox scenarioId is required for official remote validation.")
