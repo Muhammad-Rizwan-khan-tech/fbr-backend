@@ -31,6 +31,7 @@ class FBRSubmissionResponse(BaseModel):
     is_retryable: bool
     error_code: Optional[str] = None
     error_message: Optional[str] = None
+    gateway_diagnostics: Dict[str, Any] = {}
     submitted_at: datetime
     responded_at: Optional[datetime] = None
     attempts: List[FBRSubmissionAttemptResponse] = []
