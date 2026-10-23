@@ -76,6 +76,8 @@ def inspect_gateway_response(response: Any) -> Tuple[Optional[Dict[str, Any]], D
         diagnostic["response_kind"] = "html"
     elif not raw_text.strip():
         diagnostic["response_kind"] = "empty"
+    elif decoded is None and raw_text.strip().lower() == "null":
+        diagnostic["response_kind"] = "json_null"
     elif decoded is None:
         diagnostic["response_kind"] = "non_json_text"
         diagnostic["gateway_hint"] = _redact(raw_text)
