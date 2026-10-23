@@ -82,8 +82,6 @@ class ProductionFBRAdapter(FBRAdapter):
         if len(digits) == 8:
             # 7-digit NTN + 1 check digit in Pakistan -> FBR requires 7-digit NTN
             return digits[:7]
-        elif len(digits) >= 13:
-            return digits[:13]
         return digits
 
     @staticmethod
@@ -152,7 +150,7 @@ class ProductionFBRAdapter(FBRAdapter):
         seller_address = str(
             invoice_data.get("sellerAddress")
             or invoice_data.get("seller_address")
-            or (f"{seller_province}, Pakistan" if seller_province else "Pakistan")
+            or ""
         ).strip()
 
         # Buyer fields
@@ -171,25 +169,25 @@ class ProductionFBRAdapter(FBRAdapter):
         is_registered = buyer_reg_type_raw in ("REGISTERED", "REGISTERED_BUSINESS")
         buyer_reg_type = "Registered" if is_registered else "Unregistered"
 
+        # FBR DI v1.12 allows a missing ID for an unregistered buyer.
+        # Never substitute arbitrary IDs or truncate tax identifiers.
         buyer_ntn = self._clean_ntn_cnic(buyer_ntn_raw)
-        if not buyer_ntn:
-            buyer_ntn = "1111111" if not is_registered else "1000000"
 
         buyer_name = str(
             invoice_data.get("buyerBusinessName")
             or invoice_data.get("buyer_business_name")
             or invoice_data.get("buyer_name")
-            or "Walk-in Customer"
+            or ""
         ).strip()
         buyer_province = str(
             invoice_data.get("buyerProvince")
             or invoice_data.get("buyer_province")
-            or (seller_province or "Sindh")
+            or ""
         ).strip()
         buyer_address = str(
             invoice_data.get("buyerAddress")
             or invoice_data.get("buyer_address")
-            or (f"{buyer_province}, Pakistan" if buyer_province else "Pakistan")
+            or ""
         ).strip()
 
         # Items mapping
@@ -204,7 +202,9 @@ class ProductionFBRAdapter(FBRAdapter):
                 or "Product/Service"
             ).strip()
             rate_str = self._format_fbr_rate(itm.get("rate") if itm.get("rate") is not None else itm.get("tax_rate"))
-            uom = str(itm.get("uoM") or itm.get("uom") or "Numbers").strip()
+            uom = str(itm.get("uoM") or itm.get("uom") or "Numbers, pieces, units").strip()
+            if uom.upper() in ("NOS", "NUMBER", "NUMBERS", "PCS", "PIECES"):
+                uom = "Numbers, pieces, units"
             quantity = float(itm.get("quantity", 1.0))
             if quantity <= 0:
                 quantity = 1.0
@@ -239,9 +239,9 @@ class ProductionFBRAdapter(FBRAdapter):
             else:
                 total_val = float(round(val_excl + tax_app, 2))
 
-            sale_type = str(itm.get("saleType") or itm.get("sale_type") or "Goods at standard rate").strip()
-            if sale_type.upper() == "STANDARD":
-                sale_type = "Goods at standard rate"
+            sale_type = str(itm.get("saleType") or itm.get("sale_type") or "Goods at standard rate (default)").strip()
+            if sale_type.upper() in ("STANDARD", "GOODS AT STANDARD RATE"):
+                sale_type = "Goods at standard rate (default)"
 
             item_dict: Dict[str, Any] = {
                 "hsCode": hs_code,
@@ -348,8 +348,11 @@ class ProductionFBRAdapter(FBRAdapter):
         if not payload.get("sellerAddress"):
             errors.append("sellerAddress is required")
 
-        if not payload.get("buyerNTNCNIC"):
-            errors.append("buyerNTNCNIC is required")
+        buyer_id = payload.get("buyerNTNCNIC", "")
+        if payload.get("buyerRegistrationType") == "Registered" and not buyer_id:
+            errors.append("buyerNTNCNIC is required for a registered buyer")
+        if buyer_id and not re.fullmatch(r"(?:\d{7}|\d{13})", buyer_id):
+            errors.append("buyerNTNCNIC must be 7 or 13 digits when provided")
 
         if not payload.get("buyerBusinessName"):
             errors.append("buyerBusinessName is required")
