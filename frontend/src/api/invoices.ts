@@ -34,6 +34,19 @@ export const invoicesApi = {
     });
   },
 
+  validateWithFBR: async (id: string): Promise<{
+    success: boolean;
+    status: string;
+    error_code?: string | null;
+    error_message?: string | null;
+    environment: string;
+    official_validation_passed: boolean;
+    invoice_submitted: false;
+    diagnostics?: Record<string, string | number>;
+  }> => {
+    return apiFetch(`/invoices/${id}/fbr-validate`, { method: 'POST' });
+  },
+
   submitToFBR: async (id: string, scenario: string = 'AUTO'): Promise<FBRSubmission> => {
     return apiFetch<FBRSubmission>(`/invoices/${id}/submit?scenario=${encodeURIComponent(scenario)}`, {
       method: 'POST',
