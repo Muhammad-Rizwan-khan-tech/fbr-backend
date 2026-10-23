@@ -120,8 +120,7 @@ class SandboxFBRAdapter(FBRAdapter):
         digits = "".join(c for c in str(val) if c.isdigit())
         if len(digits) == 8:
             return digits[:7]
-        elif len(digits) >= 13:
-            return digits[:13]
+        # Reject unusual lengths during validation; never truncate a CNIC.
         return digits
 
     @staticmethod
@@ -255,7 +254,9 @@ class SandboxFBRAdapter(FBRAdapter):
                 or "Product/Service"
             ).strip()
             rate_str = self._format_fbr_rate(itm.get("rate") if itm.get("rate") is not None else itm.get("tax_rate"))
-            uom = str(itm.get("uoM") or itm.get("uom") or "Numbers").strip()
+            uom = str(itm.get("uoM") or itm.get("uom") or "").strip()
+            if uom.upper() in ("NOS", "NUMBER", "NUMBERS", "PCS", "PIECES"):
+                uom = "Numbers, pieces, units"
             quantity = float(itm.get("quantity", 1.0))
             if quantity <= 0:
                 quantity = 1.0
@@ -291,8 +292,8 @@ class SandboxFBRAdapter(FBRAdapter):
                 total_val = float(round(val_excl + tax_app, 2))
 
             sale_type = str(itm.get("saleType") or itm.get("sale_type") or "Goods at standard rate").strip()
-            if sale_type.upper() == "STANDARD":
-                sale_type = "Goods at standard rate"
+            if sale_type.upper() in ("STANDARD", "GOODS AT STANDARD RATE"):
+                sale_type = "Goods at standard rate (default)"
 
             item_dict: Dict[str, Any] = {
                 "hsCode": hs_code,
@@ -397,8 +398,26 @@ class SandboxFBRAdapter(FBRAdapter):
         if not payload.get("sellerAddress"):
             errors.append("sellerAddress is required")
 
-        if payload.get("buyerRegistrationType") == "Registered" and not payload.get("buyerNTNCNIC"):
+        buyer_tax_id = payload.get("buyerNTNCNIC", "")
+        if payload.get("buyerRegistrationType") == "Registered" and not buyer_tax_id:
             errors.append("buyerNTNCNIC is required for a registered buyer")
+        if buyer_tax_id and not re.fullmatch(r"(?:\d{7}|\d{13})", buyer_tax_id):
+            errors.append("buyerNTNCNIC must be 7 or 13 digits when provided")
+
+        # Disallow synthetic seller/buyer fields when transmitting an actual
+        # PRAL invoice. Local mock fixtures without credentials still work.
+        if self.bearer_token:
+            required_fields = {
+                "sellerBusinessName": ("sellerBusinessName", "seller_name", "seller_business_name"),
+                "sellerProvince": ("sellerProvince", "seller_province"),
+                "sellerAddress": ("sellerAddress", "seller_address"),
+                "buyerBusinessName": ("buyerBusinessName", "buyer_name", "buyer_business_name"),
+                "buyerProvince": ("buyerProvince", "buyer_province"),
+                "buyerAddress": ("buyerAddress", "buyer_address"),
+            }
+            for field_name, source_keys in required_fields.items():
+                if not any(str(invoice_data.get(k) or "").strip() for k in source_keys):
+                    errors.append(f"{field_name} must be supplied for a real FBR request; demo defaults are forbidden")
 
         if not payload.get("buyerBusinessName"):
             errors.append("buyerBusinessName is required")
