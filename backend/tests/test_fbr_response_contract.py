@@ -143,3 +143,28 @@ def test_inspect_response_records_only_metadata_for_html_and_json_array():
     array, metadata = inspect_gateway_response(FakeResponse(["gateway down"]))
     assert array is None
     assert metadata["array_items"] == 1
+
+
+def test_official_host_normalizes_reference_path_in_render_settings():
+    adapter = SandboxFBRAdapter(
+        base_url="https://gw.fbr.gov.pk/pdi/v1/provinces",
+        bearer_token="fixture-token",
+    )
+    assert adapter.submit_url == "https://gw.fbr.gov.pk/di_data/v1/di/postinvoicedata_sb"
+    assert adapter.validate_url == "https://gw.fbr.gov.pk/di_data/v1/di/validateinvoicedata_sb"
+
+
+def test_untrusted_gateway_never_receives_sandbox_invoice():
+    adapter = SandboxFBRAdapter(
+        base_url="https://some-other-domain.example",
+        bearer_token="fixture-token",
+    )
+    adapter.validate_invoice = lambda _: {
+        "is_valid": True, "transformed_payload": {"items": []}
+    }
+    with patch("backend.app.adapters.sandbox_adapter.httpx.Client") as http:
+        outcome = adapter.submit_invoice({})
+    assert outcome.success is False
+    assert outcome.error_code == "FBR-SBX-GATEWAY-CONFIG"
+    assert outcome.is_simulated is False
+    assert http.call_count == 0
