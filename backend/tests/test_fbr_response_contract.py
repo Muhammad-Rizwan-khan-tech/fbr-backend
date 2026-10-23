@@ -48,7 +48,7 @@ def submit_response(response):
 
 @pytest.mark.parametrize("body,media_type,kind", [
     ("<html>Gateway page</html>", "text/html", "html"),
-    ("", "text/plain", "empty"),
+    ("", "text/plain", "json_string"),
     ([], "application/json", "json_array"),
     ("Access denied", "application/json", "json_string"),
     (None, "application/json", "json_null"),
