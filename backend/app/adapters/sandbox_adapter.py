@@ -4,6 +4,7 @@ import logging
 import random
 import re
 import time
+from urllib.parse import urlsplit
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -91,7 +92,18 @@ class SandboxFBRAdapter(FBRAdapter):
             r"/di_data/v1/di/(?:postinvoicedata|validateinvoicedata)(?:_sb)?$",
             "", raw_url, flags=re.IGNORECASE,
         )
-        self.base_url = raw_url
+        # Official DI v1.12 lives at this specific HTTPS origin. Even when
+        # FBR_API_URL accidentally contains a reference/documentation path,
+        # send to the canonical invoice endpoint, not to a concatenated path.
+        parsed_gateway = urlsplit(raw_url)
+        self._official_gateway = (
+            parsed_gateway.scheme == "https"
+            and (parsed_gateway.hostname or "").lower() == "gw.fbr.gov.pk"
+            and parsed_gateway.port in (None, 443)
+            and not parsed_gateway.username
+            and not parsed_gateway.password
+        )
+        self.base_url = DEFAULT_BASE_URL if self._official_gateway else raw_url
         self.bearer_token = bearer_token or settings.FBR_API_KEY or ""
         self.pos_id = pos_id or "10001"
         self.forced_scenario = forced_scenario
@@ -522,8 +534,7 @@ class SandboxFBRAdapter(FBRAdapter):
         # If live sandbox credentials and live endpoint are present, attempt actual HTTP transmission
         is_live_sandbox = (
             bool(self.bearer_token)
-            and self.base_url.startswith("https://")
-            and not self.base_url.startswith("https://mock")
+            and self._official_gateway
         )
         if is_live_sandbox:
             endpoint = self.submit_url
@@ -623,7 +634,7 @@ class SandboxFBRAdapter(FBRAdapter):
         if self.bearer_token:
             return FBRAdapterResponse(
                 success=False, status="FAILED", error_code="FBR-SBX-GATEWAY-CONFIG",
-                error_message="Configured sandbox gateway must use an HTTPS URL. No simulated FBR invoice was issued.",
+                error_message="FBR Sandbox DI v1.12 requires the official https://gw.fbr.gov.pk gateway. Check FBR_API_URL / tenant gateway configuration.",
                 is_retryable=False, environment=self.environment,
                 provider=self.provider, is_simulated=False,
             )
@@ -780,8 +791,7 @@ class SandboxFBRAdapter(FBRAdapter):
         start = time.time()
         is_live_sandbox = (
             bool(self.bearer_token)
-            and self.base_url.startswith("https://")
-            and not self.base_url.startswith("https://mock")
+            and self._official_gateway
         )
         if is_live_sandbox:
             endpoint = self.validate_url
