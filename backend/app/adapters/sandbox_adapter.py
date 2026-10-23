@@ -254,7 +254,7 @@ class SandboxFBRAdapter(FBRAdapter):
                 or "Product/Service"
             ).strip()
             rate_str = self._format_fbr_rate(itm.get("rate") if itm.get("rate") is not None else itm.get("tax_rate"))
-            uom = str(itm.get("uoM") or itm.get("uom") or "").strip()
+            uom = str(itm.get("uoM") or itm.get("uom") or "Numbers, pieces, units").strip()
             if uom.upper() in ("NOS", "NUMBER", "NUMBERS", "PCS", "PIECES"):
                 uom = "Numbers, pieces, units"
             quantity = float(itm.get("quantity", 1.0))
