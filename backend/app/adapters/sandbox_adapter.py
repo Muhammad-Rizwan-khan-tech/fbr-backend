@@ -664,38 +664,93 @@ class SandboxFBRAdapter(FBRAdapter):
         return self.parse_response(simulated_v112_response)
 
     def validate_invoice_remote(self, invoice_data: Dict[str, Any]) -> FBRAdapterResponse:
-        """Sends invoice to the sandbox validateinvoicedata_sb endpoint."""
+        """Call official validateinvoicedata_sb without registering an invoice."""
+        if not self.bearer_token:
+            return FBRAdapterResponse(
+                success=False, status="FAILED", error_code="FBR-SBX-TOKEN-MISSING",
+                error_message="Sandbox security token is missing.", is_retryable=False,
+                environment=self.environment, provider=self.provider, is_simulated=False,
+            )
         val = self.validate_invoice(invoice_data)
         if not val["is_valid"]:
             return FBRAdapterResponse(
-                success=False,
-                status="INVALID",
-                error_code="FBR-SBX-VAL-100",
-                error_message="; ".join(val["errors"]),
-                is_retryable=False,
-                raw_response={"errors": val["errors"]},
-                environment=self.environment,
-                provider=self.provider,
-                is_simulated=False,
+                success=False, status="INVALID", error_code="FBR-SBX-LOCAL-VALIDATION",
+                error_message="; ".join(val["errors"])[:600], is_retryable=False,
+                raw_response={"validation_errors": val["errors"][:10]},
+                environment=self.environment, provider=self.provider, is_simulated=False,
             )
-        fbr_payload = val.get("transformed_payload") or self._transform_to_fbr_schema(invoice_data)
         endpoint = self.validate_url
+        payload = val["transformed_payload"]
         headers = {
             "Authorization": f"Bearer {self.bearer_token}",
-            "Content-Type": "application/json",
+            "Content-Type": "application/json", "Accept": "application/json",
         }
         try:
-            with httpx.Client(timeout=settings.FBR_HTTP_TIMEOUT_SECONDS, proxy=settings.FIXIE_URL or None, trust_env=not bool(settings.FIXIE_URL)) as client:
-                resp = client.post(endpoint, json=fbr_payload, headers=headers)
-                return self.parse_response(resp.json())
-        except Exception as e:
+            with httpx.Client(
+                timeout=settings.FBR_HTTP_TIMEOUT_SECONDS,
+                proxy=settings.FIXIE_URL or None,
+                trust_env=not bool(settings.FIXIE_URL),
+            ) as client:
+                response = client.post(endpoint, json=payload, headers=headers)
+            data, meta = inspect_gateway_response(response)
+            if response.status_code >= 400:
+                detail = _safe_gateway_error(data) or meta.get("gateway_hint") or "Gateway rejected validation request"
+                return FBRAdapterResponse(
+                    success=False, status="INVALID" if response.status_code < 500 else "FAILED",
+                    error_code=f"FBR-SBX-VALIDATE-HTTP-{response.status_code}",
+                    error_message=f"FBR validation HTTP {response.status_code}: {detail}"[:600],
+                    is_retryable=response.status_code == 429 or response.status_code >= 500,
+                    raw_response={**meta, "error_summary": detail[:250]},
+                    environment=self.environment, provider=self.provider, is_simulated=False,
+                )
+            if not isinstance(data, dict):
+                return FBRAdapterResponse(
+                    success=False, status="FAILED",
+                    error_code="FBR-SBX-VALIDATE-RESPONSE-FORMAT",
+                    error_message=(
+                        f"FBR validation HTTP {response.status_code} returned "
+                        f"{meta['response_kind']} ({meta['content_type']}); "
+                        "expected validationResponse JSON object."
+                    ),
+                    raw_response=meta, environment=self.environment,
+                    provider=self.provider, is_simulated=False,
+                )
+            validation = data.get("validationResponse") or data.get("ValidationResponse") or {}
+            if not isinstance(validation, dict):
+                validation = {}
+            code = str(validation.get("statusCode") or "").strip()
+            status = str(validation.get("status") or "").strip().lower()
+            line_statuses = validation.get("invoiceStatuses") or []
+            item_rejections = [
+                item for item in line_statuses
+                if isinstance(item, dict) and (
+                    str(item.get("status", "")).lower() in ("invalid", "failed", "rejected")
+                    or str(item.get("statusCode") or "") not in ("", "0", "00", "200")
+                    or bool(item.get("error"))
+                )
+            ] if isinstance(line_statuses, list) else []
+            valid = code in ("00", "0") and status == "valid" and not item_rejections
+            if valid:
+                return FBRAdapterResponse(
+                    success=True, status="VALIDATED",
+                    error_message=None,
+                    raw_response={**data, **meta, "note": "Validation passed; invoice NOT submitted"},
+                    environment=self.environment, provider=self.provider, is_simulated=False,
+                )
+            explanation = _safe_gateway_error(data) or "FBR did not confirm a valid invoice payload."
             return FBRAdapterResponse(
-                success=False,
-                status="FAILED",
-                error_message=str(e),
-                environment=self.environment,
-                provider=self.provider,
-                is_simulated=False,
+                success=False, status="INVALID", error_code=f"FBR-SBX-VALIDATE-{code or 'INVALID'}",
+                error_message=explanation[:600], is_retryable=False,
+                raw_response={**data, **meta},
+                environment=self.environment, provider=self.provider, is_simulated=False,
+            )
+        except httpx.RequestError as exc:
+            logger.warning("FBR Sandbox validation transport: %s", type(exc).__name__)
+            return FBRAdapterResponse(
+                success=False, status="FAILED", error_code="NET-SBX-VALIDATE",
+                error_message=f"FBR Sandbox validation transport failed ({type(exc).__name__})",
+                is_retryable=True, raw_response={"error_type": type(exc).__name__},
+                environment=self.environment, provider=self.provider, is_simulated=False,
             )
 
     def submit_note(self, note_data: Dict[str, Any]) -> FBRAdapterResponse:
