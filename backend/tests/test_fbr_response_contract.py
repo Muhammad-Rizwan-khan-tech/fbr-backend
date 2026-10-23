@@ -51,7 +51,7 @@ def submit_response(response):
     ("", "text/plain", "empty"),
     ([], "application/json", "json_array"),
     ("Access denied", "application/json", "json_string"),
-    (None, "application/json", "empty"),
+    (None, "application/json", "json_null"),
 ])
 def test_http_200_non_invoice_content_is_never_marked_accepted(body, media_type, kind):
     _, result = submit_response(FakeResponse(body, content_type=media_type))
