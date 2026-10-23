@@ -162,46 +162,67 @@ def validate_invoice(
 @router.post("/{invoice_id}/fbr-validate")
 def fbr_validate_invoice_remote(
     invoice_id: str,
-    environment: str = Query("SANDBOX", description="SANDBOX or PRODUCTION"),
+    environment: Optional[str] = Query(None, description="Must match the tenant SANDBOX/PRODUCTION mode"),
     tenant: Organization = Depends(get_current_tenant),
     db: Session = Depends(get_db),
 ):
-    """Section 4.3/4.4 Remote PRAL Validation (`validateinvoicedata_sb` / `validateinvoicedata`).
-    Strictly requires a configured PRAL Bearer token; never fakes remote validation when unconfigured.
-    """
+    """Read-only remote FBR/PRAL validation; NEVER registers a tax invoice."""
     from backend.app.core.errors import CredentialsMissingError
-    from backend.app.services.pral_reference_service import pral_reference_service
+    from backend.app.models.tenant import OrganizationSettings
+    from backend.app.models.fbr_credential import FBRCredential
     from backend.app.adapters.sandbox_adapter import SandboxFBRAdapter
     from backend.app.adapters.production_adapter import ProductionFBRAdapter
 
     invoice = db.query(Invoice).filter(
-        Invoice.id == invoice_id,
-        Invoice.tenant_id == tenant.id
+        Invoice.id == invoice_id, Invoice.tenant_id == tenant.id
     ).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
-
-    token = pral_reference_service.resolve_token(db=db, tenant_id=tenant.id)
-    if not token:
-        raise CredentialsMissingError(
-            "Remote FBR validation is disabled because no PRAL Bearer token is configured for this organization."
+    tenant_settings = db.query(OrganizationSettings).filter(
+        OrganizationSettings.organization_id == tenant.id
+    ).first()
+    active_mode = (tenant_settings.fbr_mode if tenant_settings else "DEMO").upper()
+    if active_mode not in ("SANDBOX", "PRODUCTION"):
+        raise HTTPException(status_code=409, detail="Select a real SANDBOX or PRODUCTION gateway mode first.")
+    if environment is not None and environment.upper() != active_mode:
+        raise HTTPException(
+            status_code=409,
+            detail="Validation environment does not match the client's configured mode.",
         )
-
+    cred = db.query(FBRCredential).filter(
+        FBRCredential.organization_id == tenant.id,
+        FBRCredential.is_active.is_(True),
+    ).first()
+    token = (cred.get_auth_token() or cred.get_api_key()) if cred else None
+    if not token:
+        raise CredentialsMissingError("The tenant's encrypted FBR token is not configured.")
     canonical = FBRService._build_fbr_payload(invoice, db=db)
-    if environment.upper() == "PRODUCTION":
-        adapter = ProductionFBRAdapter(bearer_token=token)
+    if active_mode == "SANDBOX" and not canonical.get("scenarioId"):
+        raise HTTPException(status_code=422, detail="Sandbox scenarioId is required for official remote validation.")
+
+    if active_mode == "PRODUCTION":
+        adapter = ProductionFBRAdapter(
+            bearer_token=token,
+            base_url=(tenant_settings.fbr_base_url if tenant_settings else None) or (cred.base_url if cred else None),
+        )
     else:
-        adapter = SandboxFBRAdapter(bearer_token=token)
-    res = adapter.validate_invoice_remote(canonical)
+        adapter = SandboxFBRAdapter(
+            bearer_token=token,
+            base_url=(tenant_settings.fbr_base_url if tenant_settings else None) or (cred.base_url if cred else None),
+        )
+    result = adapter.validate_invoice_remote(canonical)
+    # A validation-only response is never proof of registration/accepted invoice.
     return {
-        "invoice_id": invoice.id,
-        "success": res.success,
-        "status": res.status,
-        "error_code": res.error_code,
-        "error_message": res.error_message,
-        "environment": res.environment,
-        "official_live_verified": bool(res.success),
-        "raw_response": res.raw_response,
+        "invoice_id": invoice.id, "success": result.success,
+        "status": result.status, "error_code": result.error_code,
+        "error_message": result.error_message, "environment": active_mode,
+        "official_validation_passed": bool(result.success),
+        "official_live_verified": False,
+        "invoice_submitted": False,
+        "diagnostics": {
+            key: value for key, value in (result.raw_response or {}).items()
+            if key in ("http_status", "response_kind", "content_type", "body_chars", "body_sha256_prefix", "gateway_hint", "error_summary")
+        },
     }
 
 
