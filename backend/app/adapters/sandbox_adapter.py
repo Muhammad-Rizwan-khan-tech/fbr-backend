@@ -11,6 +11,7 @@ import httpx
 
 from backend.app.adapters.base import FBRAdapter, FBRAdapterResponse
 from backend.app.core.config import settings
+from backend.app.adapters.gateway_response import inspect_gateway_response
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,13 @@ class SandboxFBRAdapter(FBRAdapter):
     ):
         raw_url = (base_url or settings.FBR_API_URL or DEFAULT_BASE_URL).rstrip("/")
         raw_url = re.sub(r"/api/v1/Invoice.*$", "", raw_url)
+        # Render users may configure a full FBR v1.12 endpoint as the base URL.
+        # Normalize every known invoice endpoint to its origin to avoid
+        # appending /di_data/v1/di/postinvoicedata_sb twice.
+        raw_url = re.sub(
+            r"/di_data/v1/di/(?:postinvoicedata|validateinvoicedata)(?:_sb)?$",
+            "", raw_url, flags=re.IGNORECASE,
+        )
         self.base_url = raw_url
         self.bearer_token = bearer_token or settings.FBR_API_KEY or ""
         self.pos_id = pos_id or "10001"
@@ -215,9 +223,9 @@ class SandboxFBRAdapter(FBRAdapter):
         is_registered = buyer_reg_type_raw in ("REGISTERED", "REGISTERED_BUSINESS")
         buyer_reg_type = "Registered" if is_registered else "Unregistered"
 
+        # Unregistered buyers may omit NTN/CNIC under FBR DI v1.12.
+        # Never manufacture an identifier: registered buyers must supply one.
         buyer_ntn = self._clean_ntn_cnic(buyer_ntn_raw)
-        if not buyer_ntn:
-            buyer_ntn = "1111111" if not is_registered else "1000000"
 
         buyer_name = str(
             invoice_data.get("buyerBusinessName")
@@ -389,8 +397,8 @@ class SandboxFBRAdapter(FBRAdapter):
         if not payload.get("sellerAddress"):
             errors.append("sellerAddress is required")
 
-        if not payload.get("buyerNTNCNIC"):
-            errors.append("buyerNTNCNIC is required")
+        if payload.get("buyerRegistrationType") == "Registered" and not payload.get("buyerNTNCNIC"):
+            errors.append("buyerNTNCNIC is required for a registered buyer")
 
         if not payload.get("buyerBusinessName"):
             errors.append("buyerBusinessName is required")
@@ -504,19 +512,17 @@ class SandboxFBRAdapter(FBRAdapter):
                 "Authorization": f"Bearer {self.bearer_token}",
                 "Content-Type": "application/json",
                 "User-Agent": "FBR-Invoice-Cloud-DI-Sandbox/1.12",
+                "Accept": "application/json",
             }
             try:
                 with httpx.Client(timeout=settings.FBR_HTTP_TIMEOUT_SECONDS, proxy=settings.FIXIE_URL or None, trust_env=not bool(settings.FIXIE_URL)) as client:
                     resp = client.post(endpoint, json=fbr_payload, headers=headers)
-                    try:
-                        data = resp.json()
-                    except ValueError:
-                        data = None
+                    data, gateway_meta = inspect_gateway_response(resp)
                     http_status = resp.status_code
                     if http_status >= 400:
                         details = _safe_gateway_error(data)
-                        if not details and data is None:
-                            details = _safe_gateway_error(getattr(resp, "text", ""))
+                        if not details:
+                            details = gateway_meta.get("gateway_hint", "")
                         if not details:
                             details = "Gateway returned no recognized structured error; check FBR access, token and invoice payload."
                         if http_status in (401, 403):
@@ -537,23 +543,36 @@ class SandboxFBRAdapter(FBRAdapter):
                             error_code=error_code,
                             error_message=f"FBR Sandbox HTTP {http_status}: {details}",
                             is_retryable=http_status == 429 or http_status >= 500,
-                            raw_response={"http_status": http_status, "error_summary": details},
+                            raw_response={**gateway_meta, "error_summary": details},
                             environment=self.environment,
                             provider=self.provider,
                             is_simulated=False,
                         )
                     if not isinstance(data, dict):
+                        kind = gateway_meta.get("response_kind", "unknown")
+                        ctype = gateway_meta.get("content_type", "unknown")
+                        hint = gateway_meta.get("gateway_hint")
+                        message = (
+                            f"FBR Sandbox HTTP {http_status} returned {kind} (Content-Type: {ctype}). "
+                            + (f"Gateway message: {hint}. " if hint else "")
+                            + "Expected the DI v1.12 invoice validation JSON object. "
+                              "Confirm the official gw.fbr.gov.pk endpoint and inspect the response fingerprint."
+                        )
+                        logger.warning(
+                            "FBR Sandbox response mismatch: kind=%s type=%s status=%s fingerprint=%s",
+                            kind, ctype, http_status, gateway_meta.get("body_sha256_prefix"),
+                        )
                         return FBRAdapterResponse(
                             success=False, status="FAILED",
                             error_code="FBR-SBX-RESPONSE-FORMAT",
-                            error_message=f"FBR Sandbox HTTP {http_status} returned a non-JSON-object response.",
+                            error_message=message[:600],
                             is_retryable=False,
-                            raw_response={"http_status": http_status, "response_format": "non_object"},
+                            raw_response=gateway_meta,
                             environment=self.environment, provider=self.provider,
                             is_simulated=False,
                         )
                     result = self.parse_response(data)
-                    result.raw_response = {**data, "http_status": http_status}
+                    result.raw_response = {**data, **gateway_meta}
                     return result
             except httpx.RequestError as net_err:
                 logger.warning("Sandbox transport failed: %s", type(net_err).__name__)
