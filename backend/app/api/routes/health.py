@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
-from backend.app.core.database import get_db
+from backend.app.core.database import get_db, engine
 from backend.app.core.config import settings
 from backend.app.core.redis_client import ping_redis
 from backend.app.storage import get_storage
@@ -21,7 +21,7 @@ def healthcheck(db: Session = Depends(get_db)):
     # 1. Database Probe
     try:
         db.execute(text("SELECT 1"))
-        components["database"] = {"status": "UP", "engine": settings.DATABASE_URL.split("://")[0]}
+        components["database"] = {"status": "UP", "engine": engine.dialect.name}
     except Exception as exc:
         components["database"] = {"status": "DOWN", "error_type": type(exc).__name__}
         is_healthy = False
