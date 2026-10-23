@@ -9,6 +9,7 @@ from sqlalchemy import engine_from_config, pool
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from backend.app.core.config import settings  # noqa: E402
+from backend.app.core.db_url import normalize_database_url  # noqa: E402
 from backend.app.core.database import Base  # noqa: E402
 import backend.app.models  # noqa: E402,F401  (registers all tables on Base.metadata)
 
@@ -16,13 +17,14 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
+database_url = normalize_database_url(settings.DATABASE_URL)
+config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=settings.DATABASE_URL,
+        url=database_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},

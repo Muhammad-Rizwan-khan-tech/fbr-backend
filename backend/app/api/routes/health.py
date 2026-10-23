@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
-from backend.app.core.database import get_db
+from backend.app.core.database import get_db, engine
 from backend.app.core.config import settings
 from backend.app.core.redis_client import ping_redis
 from backend.app.storage import get_storage
@@ -21,9 +21,9 @@ def healthcheck(db: Session = Depends(get_db)):
     # 1. Database Probe
     try:
         db.execute(text("SELECT 1"))
-        components["database"] = {"status": "UP", "engine": settings.DATABASE_URL.split("://")[0]}
+        components["database"] = {"status": "UP", "engine": engine.dialect.name}
     except Exception as exc:
-        components["database"] = {"status": "DOWN", "error": str(exc)}
+        components["database"] = {"status": "DOWN", "error_type": type(exc).__name__}
         is_healthy = False
 
     # 2. Redis Probe
@@ -36,7 +36,7 @@ def healthcheck(db: Session = Depends(get_db)):
         if not redis_ok and settings.QUEUE_BACKEND == "celery":
             is_healthy = False
     except Exception as exc:
-        components["redis"] = {"status": "DOWN", "error": str(exc)}
+        components["redis"] = {"status": "DOWN", "error_type": type(exc).__name__}
         if settings.QUEUE_BACKEND == "celery":
             is_healthy = False
 
@@ -51,7 +51,7 @@ def healthcheck(db: Session = Depends(get_db)):
         if not storage_ok:
             is_healthy = False
     except Exception as exc:
-        components["storage"] = {"status": "DOWN", "error": str(exc)}
+        components["storage"] = {"status": "DOWN", "error_type": type(exc).__name__}
         is_healthy = False
 
     # 4. Queue / Worker subsystem
