@@ -4,6 +4,7 @@ Render supplies DATABASE_URL as a complete URI. The dpg-* identifier alone is
 not a usable DATABASE_URL and must never be hardcoded as a credential.
 """
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 
 def normalize_database_url(value: str | None) -> str:
@@ -19,7 +20,7 @@ def normalize_database_url(value: str | None) -> str:
         raw = "postgresql://" + raw[len("postgres://"):]
     try:
         parsed = make_url(raw)
-    except (ValueError, TypeError, AttributeError) as exc:
+    except (ArgumentError, ValueError, TypeError, AttributeError):
         raise ValueError("DATABASE_URL is not a valid SQLAlchemy database URL") from None
 
     dialect = parsed.get_backend_name()
