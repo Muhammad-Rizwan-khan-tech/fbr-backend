@@ -70,13 +70,36 @@ export const InvoicesPage: React.FC<InvoicesPageProps> = ({ onNewInvoice }) => {
     try {
       const res = await invoicesApi.validateInvoice(invoiceId);
       if (res.is_valid) {
-        alert('Validation Successful! Invoice is fully compliant with FBR tax schema.');
+        alert('Local data checks passed. FBR has NOT yet validated or registered this invoice. Use FBR Check to validate against the official gateway.');
       } else {
         alert(`Validation Errors:\n${res.errors.join('\n')}`);
       }
       await fetchInvoices();
     } catch (err: any) {
       alert(`Validation error: ${err.message}`);
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
+  const handleRemoteValidate = async (invoiceId: string) => {
+    setProcessingId(invoiceId);
+    try {
+      const result = await invoicesApi.validateWithFBR(invoiceId);
+      const diagnostics = result.diagnostics || {};
+      const technical = [
+        diagnostics.http_status !== undefined ? `Gateway HTTP: ${diagnostics.http_status}` : undefined,
+        diagnostics.response_kind ? `Response format: ${diagnostics.response_kind}` : undefined,
+        diagnostics.content_type ? `Content-Type: ${diagnostics.content_type}` : undefined,
+        diagnostics.body_sha256_prefix ? `Response fingerprint: ${diagnostics.body_sha256_prefix}` : undefined,
+      ].filter(Boolean).join('\n');
+      alert(
+        result.success
+          ? `FBR ${result.environment} validation passed. Invoice was NOT submitted or registered.\n${technical}`
+          : `FBR ${result.environment} validation failed: ${result.error_code || result.status}\n${result.error_message || 'No rejection reason returned'}\n${technical}`
+      );
+    } catch (err: any) {
+      alert(`Official FBR validation request failed: ${err.message}`);
     } finally {
       setProcessingId(null);
     }
@@ -349,9 +372,17 @@ export const InvoicesPage: React.FC<InvoicesPageProps> = ({ onNewInvoice }) => {
                               onClick={() => handleValidate(inv.id)}
                               disabled={processingId === inv.id}
                               className="px-2 py-1 border border-slate-200 hover:bg-slate-100 text-slate-600 rounded-lg text-xs font-medium transition-colors"
-                              title="Validate rules"
+                              title="Local data checks only (does not contact FBR)"
                             >
-                              Validate
+                              Local Check
+                            </button>
+                            <button
+                              onClick={() => handleRemoteValidate(inv.id)}
+                              disabled={processingId === inv.id}
+                              className="px-2 py-1 border border-sky-200 bg-sky-50 hover:bg-sky-100 text-sky-700 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
+                              title="Validate using official FBR API; no invoice is registered"
+                            >
+                              FBR Check
                             </button>
                             <button
                               onClick={() => handleSubmit(inv.id)}

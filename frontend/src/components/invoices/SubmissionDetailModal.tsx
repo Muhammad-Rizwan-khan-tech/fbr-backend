@@ -75,6 +75,25 @@ export const SubmissionDetailModal: React.FC<SubmissionDetailModalProps> = ({
             distinguish real FBR HTTP responses from local validation or transport failures.
           </p>
 
+          {/* Diagnostic metadata does not contain the original invoice or token. */}
+          {submission.gateway_diagnostics && Object.keys(submission.gateway_diagnostics).length > 0 && (
+            <div className="p-3 bg-sky-50 border border-sky-200 rounded-lg text-xs text-sky-900 space-y-1">
+              <div className="font-bold">Actual gateway response diagnostics</div>
+              <div>HTTP status: {submission.gateway_diagnostics.http_status ?? 'No upstream response'}</div>
+              <div>Response type: {submission.gateway_diagnostics.response_kind || 'Unknown'}</div>
+              <div>Content-Type: {submission.gateway_diagnostics.content_type || 'Unknown'}</div>
+              {submission.gateway_diagnostics.array_items !== undefined && (
+                <div>Response array entries: {submission.gateway_diagnostics.array_items}</div>
+              )}
+              {submission.gateway_diagnostics.body_sha256_prefix && (
+                <div>Response fingerprint: <span className="font-mono">{submission.gateway_diagnostics.body_sha256_prefix}</span></div>
+              )}
+              <div className="text-[11px] text-sky-700">
+                HTTP 200 does not confirm FBR invoice registration. Only an accepted invoice number and valid status do.
+              </div>
+            </div>
+          )}
+
           {/* Attempt Timeline */}
           <div>
             <h4 className="text-xs font-bold text-slate-700 mb-2">Transmission Attempts Timeline</h4>

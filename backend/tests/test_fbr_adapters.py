@@ -199,8 +199,8 @@ def test_di_v112_payload_mapping_no_legacy_keys():
 
         # 5. Assert value types and formatting
         assert item["rate"] == "18%"
-        assert item["uoM"] == "Numbers"
-        assert item["saleType"] == "Goods at standard rate"
+        assert item["uoM"] == "Numbers, pieces, units"
+        assert item["saleType"] == "Goods at standard rate (default)"
         assert isinstance(item["quantity"], (int, float))
         assert isinstance(item["totalValues"], (int, float))
         assert isinstance(item["valueSalesExcludingST"], (int, float))

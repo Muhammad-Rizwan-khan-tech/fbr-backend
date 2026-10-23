@@ -253,6 +253,14 @@ export interface FBRSubmission {
   is_retryable: boolean;
   error_code?: string;
   error_message?: string;
+  gateway_diagnostics?: {
+    http_status?: number;
+    content_type?: string;
+    response_kind?: string;
+    body_chars?: number;
+    body_sha256_prefix?: string;
+    array_items?: number;
+  };
   submitted_at: string;
   responded_at?: string;
   attempts: FBRSubmissionAttempt[];

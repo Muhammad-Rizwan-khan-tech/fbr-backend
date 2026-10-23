@@ -1,3 +1,5 @@
+import json
+from typing import Any, Dict
 from sqlalchemy import Column, String, Boolean, Integer, DateTime, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from backend.app.core.database import Base
@@ -44,6 +46,19 @@ class FBRSubmission(Base, TenantMixin):
 
     invoice = relationship("Invoice", back_populates="submissions")
     attempts = relationship("FBRSubmissionAttempt", back_populates="submission", cascade="all, delete-orphan", order_by="FBRSubmissionAttempt.attempt_number")
+
+    @property
+    def gateway_diagnostics(self) -> Dict[str, Any]:
+        """Expose only bounded safe gateway metadata, never full fiscal payloads."""
+        try:
+            data = json.loads(self.response_payload or "{}")
+        except (TypeError, ValueError):
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        safe_keys = ("http_status", "content_type", "response_kind",
+                     "body_chars", "body_sha256_prefix", "array_items")
+        return {key: data[key] for key in safe_keys if key in data}
 
 
 class FBRSubmissionAttempt(Base, TimestampMixin):
