@@ -8,6 +8,8 @@ from urllib.parse import urlsplit
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from backend.app.core.fbr_hs_code import normalize_hs_code, valid_hs_code
+
 import httpx
 
 from backend.app.adapters.base import FBRAdapter, FBRAdapterResponse
@@ -257,7 +259,7 @@ class SandboxFBRAdapter(FBRAdapter):
 
         items: List[Dict[str, Any]] = []
         for itm in invoice_data.get("items", []):
-            hs_code = str(itm.get("hsCode") or itm.get("hs_code") or itm.get("pct_code") or "9900.00.00").strip()
+            hs_code = normalize_hs_code(itm.get("hsCode") or itm.get("hs_code") or itm.get("pct_code") or "")
             desc = str(
                 itm.get("productDescription")
                 or itm.get("product_description")
@@ -450,8 +452,8 @@ class SandboxFBRAdapter(FBRAdapter):
             errors.append("At least one item is required")
         else:
             for idx, itm in enumerate(items, 1):
-                if not itm.get("hsCode"):
-                    errors.append(f"Item {idx}: hsCode is required")
+                if not valid_hs_code(itm.get("hsCode")):
+                    errors.append(f"Item {idx}: hsCode must contain 8 digits, e.g. 8471.3010")
                 if not itm.get("productDescription"):
                     errors.append(f"Item {idx}: productDescription is required")
                 r_val = str(itm.get("rate") or "").strip()

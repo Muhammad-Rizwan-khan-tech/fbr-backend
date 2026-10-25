@@ -9,6 +9,7 @@ Exposes:
 """
 
 from typing import Any, Dict, Optional, Union
+from backend.app.core.fbr_hs_code import normalize_hs_code
 from fastapi import APIRouter, Body, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -205,7 +206,7 @@ async def fbr_get_hs_uom(
 ):
     """Section 5.9: GET /pdi/v2/HS_UOM?hs_code=...&annexure_id=..."""
     return await pral_reference_service.fetch_hs_uom_envelope(
-        hs_code=hs_code,
+        hs_code=normalize_hs_code(hs_code),
         annexure_id=annexure_id,
         provider_mode=provider_mode,
         db=db,
@@ -430,7 +431,7 @@ async def get_uoms_for_hs_code(
 ):
     """GET /pdi/v2/HS_UOM — Allowed UOMs for a given HS code and annexure ID."""
     return await pral_reference_service.get_valid_uoms_for_hs_code(
-        hs_code=hs_code, annexure_id=annexure_id, db=db, tenant_id=current_user.tenant_id
+        hs_code=normalize_hs_code(hs_code), annexure_id=annexure_id, db=db, tenant_id=current_user.tenant_id
     )
 
 

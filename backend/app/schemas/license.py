@@ -74,6 +74,9 @@ class LicenseStatusResponse(BaseModel):
 
 
 class FBRConnectionPublicStatusResponse(BaseModel):
+    connection_status: str = "NOT_CONFIGURED"
+    is_connected: bool = False
+    verification_scope: str = "Token authentication only; seller registration and invoice acceptance are separate"
     is_configured: bool
     environment: str
     provider: str

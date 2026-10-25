@@ -175,10 +175,15 @@ def get_fbr_connection_status(
     db: Session = Depends(get_db),
 ):
     """Returns organization-specific FBR connection health and masked configuration."""
+    # Reuse the canonical tenant status so both API routes and admin agree.
+    from backend.app.api.routes.fbr import get_fbr_status
+    connection = get_fbr_status(tenant=tenant, db=db)
     cred = db.query(FBRCredential).filter(FBRCredential.organization_id == tenant.id).first()
     if not cred:
         fbr_mode = tenant.settings.fbr_mode if tenant.settings else "DEMO"
         return {
+            "connection_status": connection.connection_status,
+            "is_connected": connection.is_connected,
             "is_configured": False,
             "environment": fbr_mode,
             "provider": "MOCK",
@@ -192,7 +197,9 @@ def get_fbr_connection_status(
 
     masked = cred.to_masked_dict()
     return {
-        "is_configured": cred.is_active,
+        "connection_status": connection.connection_status,
+        "is_connected": connection.is_connected,
+        "is_configured": bool(cred.is_active and (cred.get_auth_token() or cred.get_api_key())),
         "environment": cred.environment,
         "provider": cred.provider,
         "status": cred.status,

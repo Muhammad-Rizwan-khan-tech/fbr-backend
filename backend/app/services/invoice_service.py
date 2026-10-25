@@ -372,27 +372,9 @@ class InvoiceService:
         ).first()
         adapter = FBRAdapterFactory.get_adapter_for_tenant(credential=cred, tenant_settings=settings)
 
-        adapter_res = adapter.validate_invoice({
-            "seller_ntn": invoice.seller_ntn,
-            "buyer_ntn": invoice.buyer_ntn,
-            "invoice_number": invoice.invoice_number,
-            "invoice_type": invoice.invoice_type,
-            "reference_number": invoice.reference_number,
-            "scenario_id": getattr(invoice, "scenario_id", None),
-            "notes": invoice.notes,
-            "items": [
-                {
-                    "hs_code": i.hs_code,
-                    "description": i.description,
-                    "quantity": float(i.quantity),
-                    "tax_rate": float(i.tax_rate),
-                    "rate": getattr(i, "rate_desc", None) or f"{int(i.tax_rate)}%",
-                    "uom": i.uom,
-                    "sale_type": i.sale_type,
-                }
-                for i in invoice.items
-            ]
-        })
+        # Local validation, preview and submission must use one complete payload.
+        from backend.app.services.fbr_service import FBRService
+        adapter_res = adapter.validate_invoice(FBRService._build_fbr_payload(invoice, db=db))
 
         errors.extend(adapter_res.get("errors", []))
         warnings.extend(adapter_res.get("warnings", []))

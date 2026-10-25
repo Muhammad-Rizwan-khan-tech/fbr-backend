@@ -1,3 +1,4 @@
+from backend.app.core.fbr_connection import connection_status
 import os
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -32,32 +33,11 @@ def get_fbr_status(
     fbr_mode = settings.fbr_mode if settings else "DEMO"
 
     cred = db.query(FBRCredential).filter(FBRCredential.organization_id == tenant.id).first()
-    is_connected = False
-    conn_status = "NOT_CONFIGURED"
-    last_tested_at = None
-    last_success_at = None
-    last_error = None
-
-    if cred and cred.is_active:
-        last_tested_at = cred.last_tested_at
-        last_success_at = cred.last_success_at
-        last_error = cred.last_error
-        has_token = bool(cred.get_auth_token() or cred.get_api_key())
-        if not has_token:
-            conn_status = "NOT_CONFIGURED"
-            is_connected = False
-        elif cred.status in ("VERIFIED", "HEALTHY") and cred.last_success_at is not None:
-            conn_status = "VERIFIED"
-            is_connected = True
-        elif cred.status == "AUTH_FAILED":
-            conn_status = "AUTHENTICATION_FAILED"
-            is_connected = False
-        elif cred.status == "CONNECTION_UNAVAILABLE":
-            conn_status = "CONNECTION_UNAVAILABLE"
-            is_connected = False
-        else:
-            conn_status = "CONFIGURED_NOT_VERIFIED"
-            is_connected = False
+    conn_status = connection_status(cred, fbr_mode)
+    is_connected = conn_status == "VERIFIED"
+    last_tested_at = cred.last_tested_at if cred else None
+    last_success_at = cred.last_success_at if cred else None
+    last_error = cred.last_error if cred else None
 
     last_sub = db.query(FBRSubmission).filter(
         FBRSubmission.tenant_id == tenant.id,

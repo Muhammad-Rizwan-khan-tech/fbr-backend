@@ -169,7 +169,12 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins_list(self) -> List[str]:
-        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+        configured = [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+        # The shipped desktop host uses this finite list of loopback ports.
+        # Never allow wildcard or arbitrary web origins for desktop fallback.
+        desktop = [f"http://{host}:{port}" for host in ("localhost", "127.0.0.1")
+                   for port in (5173, 5174, 5175, 5176, 5177, 8080, 8081)]
+        return list(dict.fromkeys(configured + desktop))
 
     @property
     def BACKEND_CORS_ORIGINS(self) -> List[str]:

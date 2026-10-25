@@ -68,7 +68,10 @@ def inspect_gateway_response(response: Any) -> Tuple[Optional[Dict[str, Any]], D
                 hint = ("FBR rejected an invalid numeric invoice field. Check quantity, totalValues, "
                         "discount, fedPayable, extraTax, furtherTax and salesTaxWithheldAtSource. "
                         "All numeric fields must be supplied as numbers, including zero values."
-                        if "0300" in codes else "FBR rejected the invoice; its response body was malformed.")
+                        if "0300" in codes else
+                        "FBR rejected the HS code. Use an 8-digit code from the official FBR HS catalog (e.g. 8471.3010), and check its sale type/UOM mapping."
+                        if any(code in codes for code in ("0019", "0044", "0052")) else
+                        "FBR rejected the invoice; its response body was malformed. Error code: " + codes[0])
                 diagnostic["response_kind"] = "malformed_json_rejection"
                 return {"validationResponse": {"statusCode": "01", "status": "Invalid",
                         "errorCode": codes[0], "error": hint}}, diagnostic

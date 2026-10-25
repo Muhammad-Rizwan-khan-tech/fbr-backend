@@ -9,14 +9,14 @@ from backend.app.core.db_url import normalize_database_url
     [
         (
             "postgres://username:p%40ss@dpg-example-a.oregon-postgres.render.com/fbrdb",
-            "postgresql://username:p%40ss@dpg-example-a.oregon-postgres.render.com/fbrdb",
+            "postgresql+psycopg://username:p%40ss@dpg-example-a.oregon-postgres.render.com/fbrdb",
         ),
         (
             "postgresql://username:secret@dpg-example-a.oregon-postgres.render.com/fbrdb?sslmode=require",
-            "postgresql://username:secret@dpg-example-a.oregon-postgres.render.com/fbrdb?sslmode=require",
+            "postgresql+psycopg://username:secret@dpg-example-a.oregon-postgres.render.com/fbrdb?sslmode=require",
         ),
         ("sqlite:///./test_ci.db", "sqlite:///./test_ci.db"),
-        (' "postgresql://username:p%40ss@localhost:5432/appdb" ', "postgresql://username:p%40ss@localhost:5432/appdb"),
+        (' "postgresql://username:p%40ss@localhost:5432/appdb" ', "postgresql+psycopg://username:p%40ss@localhost:5432/appdb"),
     ],
 )
 def test_accepts_and_preserves_render_database_url(source, expected):
@@ -25,7 +25,7 @@ def test_accepts_and_preserves_render_database_url(source, expected):
 
 @pytest.mark.parametrize("source", [
     None, "", "dpg-dbdop6l9fdbs7384ugvg-a",
-    "postgresql://", "postgresql://username:password@localhost",
+    "postgresql://", "postgresql+psycopg://username:password@localhost",
     "postgresql://localhost/fbrdb", "mysql://root:password@localhost/private",
     "postgresql://user:password@@@",
 ])

@@ -1,3 +1,4 @@
+from backend.app.core.fbr_connection import connection_label
 import re
 import uuid
 from datetime import datetime, timezone
@@ -23,7 +24,6 @@ from backend.app.models.invoice import Invoice, FBRSubmissionStatus
 from backend.app.models.admin_audit import AdminAuditLog
 from backend.app.services.license_service import LicenseService
 from backend.app.adapters.factory import FBRAdapterFactory
-from backend.app.services.fbr_verification_service import check_fbr_token
 from backend.app.services.fbr_verification_service import check_fbr_token
 from backend.app.schemas.admin import (
     AdminCreateOrgRequest,
@@ -895,16 +895,7 @@ def list_clients(
 
         # FBR Connection status
         cred = db.query(FBRCredential).filter(FBRCredential.organization_id == o.id).first()
-        if not cred or not cred.is_active or not (cred.encrypted_auth_token or cred.encrypted_api_key):
-            fbr_status = "Not Configured"
-        elif cred.status in ("VERIFIED", "HEALTHY") and cred.last_success_at:
-            fbr_status = "Verified"
-        elif cred.status == "AUTH_FAILED":
-            fbr_status = "Authentication Failed"
-        elif cred.status == "CONNECTION_UNAVAILABLE":
-            fbr_status = "Connection Unavailable"
-        else:
-            fbr_status = "Configured — Not Verified"
+        fbr_status = connection_label(cred, o.settings.fbr_mode if o.settings else (cred.environment if cred else "DEMO"))
 
         items.append({
             "id": o.id,
@@ -966,16 +957,7 @@ def get_client(
         ).scalar() or 0
         activation_status = "Revoked" if revoked_devices > 0 else "Not Activated"
 
-    if not cred or not cred.is_active or not (cred.get_auth_token() or cred.get_api_key()):
-        fbr_status = "Not Configured"
-    elif cred.status in ("VERIFIED", "HEALTHY") and cred.last_success_at:
-        fbr_status = "Verified"
-    elif cred.status == "AUTH_FAILED":
-        fbr_status = "Authentication Failed"
-    elif cred.status == "CONNECTION_UNAVAILABLE":
-        fbr_status = "Connection Unavailable"
-    else:
-        fbr_status = "Configured — Not Verified"
+    fbr_status = connection_label(cred, org.settings.fbr_mode if org.settings else (cred.environment if cred else "DEMO"))
 
     pending_key = db.query(ActivationKey).filter(
         ActivationKey.organization_id == org.id,
