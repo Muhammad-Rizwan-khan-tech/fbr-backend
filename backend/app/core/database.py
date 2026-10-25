@@ -5,7 +5,7 @@ from backend.app.core.db_url import normalize_database_url
 
 # Use the same validated database URL for API workers and Alembic.
 # Render's full DATABASE_URL is provided via environment settings, never code.
-effective_db_url = normalize_database_url(settings.DATABASE_URL)
+effective_db_url = settings.resolved_database_url
 is_sqlite = effective_db_url.startswith("sqlite")
 connect_args = {"check_same_thread": False} if is_sqlite else {"connect_timeout": 10}
 engine = create_engine(

@@ -1,6 +1,9 @@
 import os
+from pathlib import Path
 from functools import lru_cache
 from typing import List, Tuple
+
+from backend.app.core.db_url import normalize_database_url
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -38,6 +41,19 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./fbr_invoice_cloud.db"
     DB_AUTO_CREATE: bool = True  # development convenience; staging/production use Alembic
 
+    @property
+    def resolved_database_url(self) -> str:
+        """Resolves DATABASE_URL to a persistent absolute path for SQLite or normalizes PostgreSQL URLs."""
+        raw = normalize_database_url(self.DATABASE_URL)
+        if raw.startswith("postgres://"):
+            raw = raw.replace("postgres://", "postgresql://", 1)
+        if raw and not raw.startswith("sqlite:///./") and not raw == "sqlite:///fbr_invoice_cloud.db":
+            return raw
+        # Default to canonical fbr_invoice_cloud.db at project root
+        repo_root = Path(__file__).resolve().parent.parent.parent.parent
+        canonical_db = repo_root / "fbr_invoice_cloud.db"
+        return f"sqlite:///{canonical_db.as_posix()}"
+
     # --- Redis / queue -----------------------------------------------------------
     REDIS_URL: str = ""
     # "celery" (Redis broker + worker processes) or "inline" (no Redis; dev & tests)
@@ -54,7 +70,6 @@ class Settings(BaseSettings):
     FBR_API_KEY: str = ""
     FBR_CLIENT_ID: str = ""
     FBR_CLIENT_SECRET: str = ""
-    FIXIE_URL: str = ""  # Fixie HTTP proxy URL; configure securely on Render
     FBR_HTTP_TIMEOUT_SECONDS: float = 15.0
     FBR_MAX_ATTEMPTS: int = 4
     FBR_RETRY_DELAYS_SECONDS: str = "300,900,1800"  # delay after attempt 1, 2, 3, ...
@@ -64,6 +79,8 @@ class Settings(BaseSettings):
     FBR_CLIENT_KEY_PATH: str = ""
     FBR_CA_CERT_PATH: str = ""
     FBR_CERT_PASSPHRASE: str = ""
+    # Static outbound proxy for FBR IP Whitelisting (Fixie / QuotaGuard)
+    FIXIE_URL: str = ""
 
     # --- Object storage ----------------------------------------------------------
     STORAGE_BACKEND: str = "local"  # local | s3
@@ -75,6 +92,17 @@ class Settings(BaseSettings):
     OBJECT_STORAGE_SECRET_KEY: str = ""
     SIGNED_URL_TTL_SECONDS: int = 300
     PUBLIC_API_BASE_URL: str = "http://localhost:8000"  # used to build local signed URLs
+
+    @property
+    def resolved_public_api_base_url(self) -> str:
+        render_url = os.environ.get("RENDER_EXTERNAL_URL")
+        if render_url:
+            return render_url.rstrip("/")
+        if os.environ.get("RENDER"):
+            return "https://fbr-backend.onrender.com"
+        if self.PUBLIC_API_BASE_URL and self.PUBLIC_API_BASE_URL != "http://localhost:8000":
+            return self.PUBLIC_API_BASE_URL.rstrip("/")
+        return self.PUBLIC_API_BASE_URL or "http://localhost:8000"
 
     # --- Disaster Recovery & Off-Site Replication -------------------------------
     BACKUP_OFFSITE_BUCKET: str = ""
