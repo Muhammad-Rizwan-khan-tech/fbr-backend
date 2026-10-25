@@ -74,16 +74,15 @@ def test_pdf_pagination_headers_and_no_false_acceptance(case):
     from pathlib import Path
     Path('/tmp/fbr_feature_preview.pdf').write_bytes(data)
 
-def test_hs_search_description_code_and_offline(case,monkeypatch):
-    from backend.app.api.routes.hs_search import search_hs_codes,pral_reference_service
+def test_hs_search_description_code_and_offline(case):
+    from backend.app.api.routes.hs_search import search_hs_codes
     db,inv,user=case
-    db.add(HSCode(code='8471.3000',description='Portable computers',chapter='84',is_active=True));db.commit()
-    monkeypatch.setattr(pral_reference_service,'fetch_item_codes_envelope',AsyncMock(side_effect=RuntimeError('offline')))
-    for term in ('portable','84713'):
-        rows=asyncio.run(search_hs_codes(search=term,q='',limit=20,tenant=SimpleNamespace(id='t'),db=db))
-        assert rows[0]['hs_code']=='8471.3000'
-        assert rows[0]['default_rate'] is None
-        assert rows[0]['official_live_verified'] is False
+    for term,expected in [('8504','8504.4010'),('monitor','8528.5200'),('8528.52.00','8528.5200'),('UPS','8504.4010')]:
+        rows=search_hs_codes(search=term,q='',limit=20,tenant=SimpleNamespace(id='t'),db=db)
+        assert any(row['hs_code']==expected for row in rows)
+        assert all(row['default_rate'] is None for row in rows)
+        assert all(row['official_live_verified'] is False for row in rows)
+
 
 def test_print_endpoint_memory_pdf_and_tenant_scope(case):
     from backend.app.api.routes.documents import printable_invoice_pdf
@@ -99,11 +98,17 @@ def test_print_endpoint_memory_pdf_and_tenant_scope(case):
     with pytest.raises(HTTPException):printable_invoice_pdf('i',tenant=SimpleNamespace(id='t'),current_user=user,db=db)
 
 
-def test_hs_official_catalog_provenance_without_invented_defaults(case,monkeypatch):
-    from backend.app.api.routes.hs_search import search_hs_codes,pral_reference_service
+def test_hs_official_catalog_provenance_without_invented_defaults(case):
+    from backend.app.api.routes.hs_search import search_hs_codes
+    from backend.app.models.pral_catalog import FBRReferenceCatalog
+    from datetime import timedelta, timezone
+    import json
     db,inv,user=case
-    env=SimpleNamespace(data=[{'hS_CODE':'8471.30.00','description':'Portable computers'}],source='PRAL_LIVE',official_live_verified=True,stale=False)
-    monkeypatch.setattr(pral_reference_service,'fetch_item_codes_envelope',AsyncMock(return_value=env))
-    rows=asyncio.run(search_hs_codes(search='84713',q='',limit=20,tenant=SimpleNamespace(id='t'),db=db))
-    assert rows[0]['source']=='PRAL_LIVE' and rows[0]['official_live_verified'] is True
-    assert rows[0]['hs_code']=='8471.3000' and rows[0]['default_rate'] is None and rows[0]['default_uom'] is None
+    db.add(FBRReferenceCatalog(tenant_id='t',catalog_key='itemdesccode',request_fingerprint='test',source='PRAL_LIVE',payload=json.dumps([{'hS_CODE':'8528.5200','description':'Updated monitor catalog'}]),record_count=1,expires_at=datetime.now(timezone.utc)+timedelta(days=1)))
+    db.add(FBRReferenceCatalog(tenant_id='other',catalog_key='itemdesccode',request_fingerprint='test',source='PRAL_LIVE',payload=json.dumps([{'hS_CODE':'9999.9999','description':'Private tenant marker'}]),record_count=1))
+    db.commit()
+    rows=search_hs_codes(search='85285200',q='',limit=20,tenant=SimpleNamespace(id='t'),db=db)
+    assert rows[0]['source']=='CACHED_OFFICIAL' and rows[0]['description']=='Updated monitor catalog'
+    assert rows[0]['default_rate'] is None and rows[0]['default_uom'] is None
+    assert rows[0]['stale'] is False
+    assert search_hs_codes(search='Private tenant marker',q='',limit=20,tenant=SimpleNamespace(id='t'),db=db)==[]
