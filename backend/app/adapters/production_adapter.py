@@ -93,6 +93,11 @@ class ProductionFBRAdapter(FBRAdapter):
             return "18%"
         str_val = str(val).strip()
         low = str_val.lower()
+        # Legacy desktop scenarios appended '%' to descriptions already ending
+        # in '%'. Normalize numeric percentage descriptions at the API boundary.
+        percentage = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)\s*%+", str_val)
+        if percentage:
+            return percentage.group(1) + "%"
         if low == "exempt":
             return "Exempt"
         if "%" in str_val or low.startswith("rs") or "rupee" in low:
