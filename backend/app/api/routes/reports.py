@@ -26,26 +26,31 @@ def get_dashboard_kpis(
     # Invoices
     today_invoices = db.query(Invoice).filter(
         Invoice.tenant_id == tenant.id,
+        Invoice.status != "DELETED",
         Invoice.invoice_date >= today_start
     ).count()
 
     month_invoices = db.query(Invoice).filter(
         Invoice.tenant_id == tenant.id,
+        Invoice.status != "DELETED",
         Invoice.invoice_date >= month_start
     ).count()
 
     valid_fbr_invoices = db.query(Invoice).filter(
         Invoice.tenant_id == tenant.id,
+        Invoice.status != "DELETED",
         Invoice.fbr_status == "VALID"
     ).count()
 
     pending_submissions = db.query(Invoice).filter(
         Invoice.tenant_id == tenant.id,
+        Invoice.status != "DELETED",
         Invoice.fbr_status == "PENDING"
     ).count()
 
     failed_submissions = db.query(Invoice).filter(
         Invoice.tenant_id == tenant.id,
+        Invoice.status != "DELETED",
         Invoice.fbr_status.in_(["FAILED", "INVALID"])
     ).count()
 
@@ -54,7 +59,7 @@ def get_dashboard_kpis(
         func.coalesce(func.sum(Invoice.taxable_amount), 0),
         func.coalesce(func.sum(Invoice.total_tax), 0),
         func.coalesce(func.sum(Invoice.grand_total), 0)
-    ).filter(Invoice.tenant_id == tenant.id).first()
+    ).filter(Invoice.tenant_id == tenant.id, Invoice.status != "DELETED").first()
 
     credit_notes_count = db.query(CreditNote).filter(CreditNote.tenant_id == tenant.id).count()
     debit_notes_count = db.query(DebitNote).filter(DebitNote.tenant_id == tenant.id).count()
@@ -82,12 +87,14 @@ def get_tax_summary(
     valid_tax = db.query(
         func.coalesce(func.sum(Invoice.taxable_amount), 0),
         func.coalesce(func.sum(Invoice.total_tax), 0)
-    ).filter(Invoice.tenant_id == tenant.id, Invoice.fbr_status == "VALID").first()
+    ).filter(Invoice.tenant_id == tenant.id,
+        Invoice.status != "DELETED", Invoice.fbr_status == "VALID").first()
 
     pending_tax = db.query(
         func.coalesce(func.sum(Invoice.taxable_amount), 0),
         func.coalesce(func.sum(Invoice.total_tax), 0)
-    ).filter(Invoice.tenant_id == tenant.id, Invoice.fbr_status != "VALID").first()
+    ).filter(Invoice.tenant_id == tenant.id,
+        Invoice.status != "DELETED", Invoice.fbr_status != "VALID").first()
 
     return {
         "verified_fbr_taxable": float(valid_tax[0]),

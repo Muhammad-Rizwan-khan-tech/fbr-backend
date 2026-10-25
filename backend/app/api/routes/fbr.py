@@ -11,6 +11,7 @@ from backend.app.models.user import User
 from backend.app.models.tenant import Organization, OrganizationSettings
 from backend.app.models.fbr_credential import FBRCredential
 from backend.app.models.fbr import FBRSubmission, FBRSubmissionAttempt
+from backend.app.models.invoice import Invoice
 from backend.app.schemas.fbr import (
     FBRSubmissionResponse, FBRStatusResponse, FBRTestConnectionResponse
 )
@@ -39,22 +40,26 @@ def get_fbr_status(
     last_success_at = cred.last_success_at if cred else None
     last_error = cred.last_error if cred else None
 
-    last_sub = db.query(FBRSubmission).filter(
+    last_sub = db.query(FBRSubmission).join(Invoice, FBRSubmission.invoice_id == Invoice.id).filter(
+        Invoice.status != "DELETED",
         FBRSubmission.tenant_id == tenant.id,
         FBRSubmission.status == "VALID"
     ).order_by(FBRSubmission.submitted_at.desc()).first()
 
-    pending_count = db.query(FBRSubmission).filter(
+    pending_count = db.query(FBRSubmission).join(Invoice, FBRSubmission.invoice_id == Invoice.id).filter(
+        Invoice.status != "DELETED",
         FBRSubmission.tenant_id == tenant.id,
         FBRSubmission.status == "PENDING"
     ).count()
 
-    failed_count = db.query(FBRSubmission).filter(
+    failed_count = db.query(FBRSubmission).join(Invoice, FBRSubmission.invoice_id == Invoice.id).filter(
+        Invoice.status != "DELETED",
         FBRSubmission.tenant_id == tenant.id,
         FBRSubmission.status.in_(["FAILED", "INVALID"])
     ).count()
 
-    valid_count = db.query(FBRSubmission).filter(
+    valid_count = db.query(FBRSubmission).join(Invoice, FBRSubmission.invoice_id == Invoice.id).filter(
+        Invoice.status != "DELETED",
         FBRSubmission.tenant_id == tenant.id,
         FBRSubmission.status == "VALID"
     ).count()
@@ -88,7 +93,8 @@ def list_submissions(
     tenant: Organization = Depends(get_current_tenant),
     db: Session = Depends(get_db)
 ):
-    query = db.query(FBRSubmission).filter(FBRSubmission.tenant_id == tenant.id)
+    from backend.app.models.invoice import Invoice
+    query = db.query(FBRSubmission).join(Invoice, FBRSubmission.invoice_id == Invoice.id).filter(FBRSubmission.tenant_id == tenant.id, Invoice.status != "DELETED")
     if status:
         query = query.filter(FBRSubmission.status == status.upper())
     return query.order_by(FBRSubmission.submitted_at.desc()).limit(limit).all()
@@ -100,7 +106,8 @@ def get_submission_detail(
     tenant: Organization = Depends(get_current_tenant),
     db: Session = Depends(get_db)
 ):
-    sub = db.query(FBRSubmission).filter(
+    sub = db.query(FBRSubmission).join(Invoice, FBRSubmission.invoice_id == Invoice.id).filter(
+        Invoice.status != "DELETED",
         FBRSubmission.id == submission_id,
         FBRSubmission.tenant_id == tenant.id
     ).first()
@@ -116,7 +123,8 @@ def retry_submission(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    sub = db.query(FBRSubmission).filter(
+    sub = db.query(FBRSubmission).join(Invoice, FBRSubmission.invoice_id == Invoice.id).filter(
+        Invoice.status != "DELETED",
         FBRSubmission.id == submission_id,
         FBRSubmission.tenant_id == tenant.id
     ).first()

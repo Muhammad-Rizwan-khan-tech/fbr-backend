@@ -63,6 +63,13 @@ class InvoiceCreate(BaseModel):
 
 
 class InvoiceUpdate(BaseModel):
+    invoice_date: Optional[datetime] = None
+    buyer_name: Optional[str] = None
+    buyer_ntn: Optional[str] = None
+    buyer_cnic: Optional[str] = None
+    buyer_address: Optional[str] = None
+    buyer_province: Optional[str] = None
+    buyer_registration_type: Optional[str] = None
     branch_id: Optional[str] = None
     customer_id: Optional[str] = None
     invoice_type: Optional[str] = None
@@ -120,6 +127,7 @@ class InvoiceResponse(BaseModel):
     reference_number: Optional[str] = None
     scenario_id: Optional[str] = None
     notes: Optional[str] = None
+    payment_terms: Optional[str] = None
     items: List[InvoiceItemResponse] = []
 
     class Config:

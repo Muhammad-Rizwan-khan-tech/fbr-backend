@@ -6,6 +6,7 @@ from backend.app.models.base import generate_uuid, TenantMixin, TimestampMixin, 
 
 
 class InvoiceStatus(str, enum.Enum):
+    DELETED = "DELETED"
     DRAFT = "DRAFT"
     VALIDATING = "VALIDATING"
     INVALID = "INVALID"

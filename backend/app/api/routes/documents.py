@@ -96,3 +96,46 @@ def serve_signed_local_file(token: str):
         )
     except Exception as exc:
         raise HTTPException(status_code=404, detail="Requested file was not found in storage.")
+
+
+@router.get("/invoices/{invoice_id}/pdf")
+def printable_invoice_pdf(invoice_id: str, tenant: Organization = Depends(get_current_tenant), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    import json, re
+    from backend.app.models.invoice import Invoice
+    from backend.app.models.reference import HSCode
+    from backend.app.models.fbr import FBRSubmission
+    from backend.app.core.fbr_hs_code import normalize_hs_code
+    from backend.app.services.pdf_service import pdf_generator
+    inv=db.query(Invoice).filter(Invoice.id==invoice_id,Invoice.tenant_id==tenant.id,Invoice.status!="DELETED").first()
+    if not inv: raise HTTPException(404,"Invoice not found")
+    codes={normalize_hs_code(x.hs_code) for x in inv.items}
+    descriptions={normalize_hs_code(x.code):x.description for x in db.query(HSCode).filter(HSCode.is_active.is_(True)).all() if normalize_hs_code(x.code) in codes}
+    from backend.app.models.pral_catalog import FBRReferenceCatalog
+    from sqlalchemy import or_
+    catalogs=db.query(FBRReferenceCatalog).filter(
+        FBRReferenceCatalog.catalog_key=="itemdesccode",
+        or_(FBRReferenceCatalog.tenant_id==tenant.id,FBRReferenceCatalog.tenant_id.is_(None)),
+        FBRReferenceCatalog.source.in_(("PRAL_LIVE","OFFICIAL_IMPORT")),
+    ).order_by(FBRReferenceCatalog.fetched_at.desc()).limit(4).all()
+    resolved=set()
+    for catalog in catalogs:
+        try:
+            rows=json.loads(catalog.payload)
+            for row in rows if isinstance(rows,list) else []:
+                code=normalize_hs_code(row.get("hs_code") or row.get("hS_CODE"))
+                if code in codes and code not in resolved and row.get("description"):
+                    descriptions[code]=row["description"]
+                    resolved.add(code)
+        except (ValueError,TypeError,AttributeError):
+            continue
+    qr=None
+    latest=db.query(FBRSubmission).filter(FBRSubmission.invoice_id==inv.id,FBRSubmission.tenant_id==tenant.id,FBRSubmission.status=="VALID").order_by(FBRSubmission.submitted_at.desc()).first()
+    if latest:
+        try:
+            raw=json.loads(latest.response_payload or '{}')
+            candidate=raw.get('qrCode') or raw.get('qr_code')
+            if isinstance(candidate,str) and candidate: qr=candidate
+        except (ValueError,TypeError): pass
+    pdf=pdf_generator.generate(inv,hs_descriptions=descriptions,qr_payload=qr)
+    filename=re.sub(r'[^a-zA-Z0-9_.-]','_',inv.fbr_invoice_number or inv.invoice_number)[:100]
+    return Response(pdf,media_type='application/pdf',headers={'Content-Disposition':f'inline; filename="FBR_Invoice_{filename}.pdf"','Cache-Control':'private, no-store'})

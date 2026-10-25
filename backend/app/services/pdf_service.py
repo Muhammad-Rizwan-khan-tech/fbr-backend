@@ -1,38 +1,43 @@
+"""Reference-layout invoice output. FBR acceptance is never inferred from printing."""
 import io
 import datetime
-from decimal import Decimal
 from typing import Optional, Any
-
-from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm, inch
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import (
-    SimpleDocTemplate,
-    Paragraph,
-    Spacer,
-    Table,
-    TableStyle,
-    KeepTogether,
-    HRFlowable,
-)
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import KeepTogether, HRFlowable
+from backend.app.models.invoice import Invoice
+from html import escape
+from pathlib import Path
+from decimal import Decimal
+from reportlab.pdfgen import canvas
+from reportlab.lib import colors
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, Image, LongTable
 from reportlab.graphics.shapes import Drawing
 from reportlab.graphics.barcode.qr import QrCodeWidget
 
-from backend.app.models.invoice import Invoice
+PAGE = (1080, 841.68)
+FOOTER = 'In the above invoices, "E" denotes that the invoice has been edited, whereas "C" indicates that the invoice has been cancelled.'
 
+class NumberedCanvas(canvas.Canvas):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.states = []
+    def showPage(self):
+        self.states.append(dict(self.__dict__))
+        self._startPage()
+    def save(self):
+        count = len(self.states)
+        for state in self.states:
+            self.__dict__.update(state)
+            self.setFont("Helvetica", 7)
+            self.drawString(28, 22, FOOTER)
+            self.drawRightString(PAGE[0]-28, 22, f"Page {self._pageNumber} of {count}")
+            super().showPage()
+        super().save()
 
 class PDFInvoiceGenerator:
-    """Production ReportLab PDF generator for Pakistan FBR Tax Invoices.
-    
-    Adheres strictly to the FBR Digital Invoicing specifications, displaying:
-    - Seller profile (Name, NTN, STRN, Branch, Province)
-    - Buyer profile (Name, NTN/CNIC, STRN, Registration Type, Province, Address)
-    - Fiscal metadata (Invoice #, Date, POS/FBR ID, QR Code)
-    - Tabular line items with Pakistani tax breakdown (Gross, Disc, Taxable, Rate, Tax, Line Total)
-    - Explicit DEMO/MOCK banner and watermark if simulated to prevent fraudulent compliance use.
-    """
-
     def __init__(self):
         self.styles = getSampleStyleSheet()
         self._init_custom_styles()
@@ -134,328 +139,71 @@ class PDFInvoiceGenerator:
             alignment=2 # Right
         ))
 
-    def _build_qr_code(self, qr_text: str, size: float = 1.0 * inch) -> Drawing:
-        """Create a vector QR Code drawing (PRAL v1.12 Section 4: 1.0 x 1.0 inch / 72 pt)."""
+    def _build_qr_code(self, qr_text, size=65):
         qr = QrCodeWidget(qr_text)
-        bounds = qr.getBounds()
-        w = bounds[2] - bounds[0]
-        h = bounds[3] - bounds[1]
-        drawing = Drawing(size, size, transform=[size / w, 0, 0, size / h, 0, 0])
-        drawing.add(qr)
-        return drawing
+        x, y, right, top = qr.getBounds()
+        d = Drawing(size, size, transform=[size/(right-x),0,0,size/(top-y),0,0])
+        d.add(qr)
+        return d
 
-    def generate(self, invoice: Invoice, organization_name: Optional[str] = None) -> bytes:
-        buffer = io.BytesIO()
-        doc = SimpleDocTemplate(
-            buffer,
-            pagesize=A4,
-            leftMargin=12 * mm,
-            rightMargin=12 * mm,
-            topMargin=10 * mm,
-            bottomMargin=12 * mm,
-        )
-
-        story = []
-
-        # 0. Official PRAL / FBR Digital Invoicing System Badge (PRAL v1.12 Section 4)
-        logo_badge_data = [[
-            Paragraph("🏛️ <b>FEDERAL BOARD OF REVENUE</b> &nbsp;|&nbsp; DIGITAL INVOICING SYSTEM (PRAL)", self.styles["InvLogoBadge"]),
-            Paragraph("<b>PRAL CERTIFIED E-INVOICE</b>", self.styles["InvLogoBadgeRight"])
-        ]]
-        logo_badge_table = Table(logo_badge_data, colWidths=[126 * mm, 60 * mm])
-        logo_badge_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#065F46")), # Emerald 800
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING", (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-            ("LEFTPADDING", (0, 0), (-1, -1), 6),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        ]))
-        story.append(logo_badge_table)
-        story.append(Spacer(1, 2 * mm))
-
-        # 1. Provenance / Simulation Banner if DEMO or MOCK
-        is_demo = bool(invoice.fbr_is_simulated or invoice.fbr_environment == "DEMO" or invoice.fbr_provider == "MOCK")
-        if is_demo:
-            banner_data = [[
-                Paragraph(
-                    "⚠️ <b>DEMO MODE — NOT AN OFFICIAL FBR FISCAL DOCUMENT</b><br/>"
-                    "Simulated compliance artifact for testing and development only. "
-                    f"Provider: {invoice.fbr_provider or 'MOCK'} | Environment: {invoice.fbr_environment or 'DEMO'}",
-                    self.styles["DemoBannerText"]
-                )
-            ]]
-            banner_table = Table(banner_data, colWidths=[186 * mm])
-            banner_table.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FEF2F2")),
-                ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#F87171")),
-                ("TOPPADDING", (0, 0), (-1, -1), 4),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-            ]))
-            story.append(banner_table)
-            story.append(Spacer(1, 3 * mm))
-
-        # 2. Header: Seller & Invoice Title
-        seller_display_name = organization_name or invoice.seller_name or "Digital Taxpayer"
-        seller_info = (
-            f"<b>{seller_display_name}</b><br/>"
-            f"NTN: <b>{invoice.seller_ntn or 'N/A'}</b> | STRN: <b>{invoice.seller_strn or 'N/A'}</b><br/>"
-            f"Branch: {invoice.seller_branch_code or 'Head Office'} | Province: {invoice.seller_province or 'N/A'}"
-        )
-
-        inv_date_str = invoice.invoice_date.strftime("%d-%b-%Y") if invoice.invoice_date else "N/A"
-        due_date_str = invoice.due_date.strftime("%d-%b-%Y") if invoice.due_date else "N/A"
-        
-        invoice_meta = (
-            f"<b>SALES TAX INVOICE</b><br/>"
-            f"Invoice No: <b>{invoice.invoice_number}</b><br/>"
-            f"Date: <b>{inv_date_str}</b><br/>"
-            f"Status: <b>{invoice.status}</b>"
-        )
-
-        header_table = Table(
-            [
-                [
-                    Paragraph(seller_info, self.styles["InvNormal"]),
-                    Paragraph(invoice_meta, self.styles["InvNormalBold"]),
-                ]
-            ],
-            colWidths=[110 * mm, 76 * mm],
-        )
-        header_table.setStyle(TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("ALIGN", (1, 0), (1, 0), "RIGHT"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 0),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-        ]))
-        story.append(header_table)
-        story.append(Spacer(1, 2 * mm))
-        story.append(HRFlowable(width="100%", thickness=1, color=self.border_color, spaceAfter=3 * mm))
-
-        # 3. Buyer Block & Transaction Info
-        buyer_reg_str = f"({invoice.buyer_registration_type})" if invoice.buyer_registration_type else ""
-        buyer_col = (
-            f"<b>BILL TO:</b><br/>"
-            f"<b>{invoice.buyer_name}</b> {buyer_reg_str}<br/>"
-            f"NTN: {invoice.buyer_ntn or 'N/A'} | STRN: {invoice.buyer_strn or 'N/A'}"
-            f"{' | CNIC: ' + invoice.buyer_cnic if invoice.buyer_cnic else ''}<br/>"
-            f"Province: {invoice.buyer_province or 'N/A'}<br/>"
-            f"Address: {invoice.buyer_address or 'N/A'}"
-        )
-
-        fbr_ref = invoice.fbr_invoice_number or (f"SIM-{invoice.invoice_number}" if is_demo else "Pending Submission")
-        sub_date_str = invoice.fbr_submission_date.strftime("%d-%b-%Y %H:%M UTC") if invoice.fbr_submission_date else "Not Submitted"
-
-        fbr_meta_col = (
-            f"<b>COMPLIANCE & FISCAL METRICS:</b><br/>"
-            f"FBR Status: <b>{invoice.fbr_status}</b><br/>"
-            f"FBR Inv No: <b>{fbr_ref}</b><br/>"
-            f"Submission Date: {sub_date_str}<br/>"
-            f"Payment Terms: {invoice.payment_terms or 'Immediate'}"
-        )
-
-        meta_table = Table(
-            [
-                [
-                    Paragraph(buyer_col, self.styles["InvNormal"]),
-                    Paragraph(fbr_meta_col, self.styles["InvNormal"]),
-                ]
-            ],
-            colWidths=[105 * mm, 81 * mm],
-        )
-        meta_table.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, -1), self.bg_light),
-            ("BOX", (0, 0), (-1, -1), 0.5, self.border_color),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ("LEFTPADDING", (0, 0), (-1, -1), 6),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-        ]))
-        story.append(meta_table)
-        story.append(Spacer(1, 4 * mm))
-
-        # 4. Line Items Table
-        items_header = [
-            Paragraph("<b>#</b>", self.styles["InvTableHeader"]),
-            Paragraph("<b>Description / HS Code</b>", self.styles["InvTableHeader"]),
-            Paragraph("<b>Qty / UOM</b>", self.styles["InvTableHeader"]),
-            Paragraph("<b>Unit Price</b>", self.styles["InvTableHeader"]),
-            Paragraph("<b>Gross</b>", self.styles["InvTableHeader"]),
-            Paragraph("<b>Disc</b>", self.styles["InvTableHeader"]),
-            Paragraph("<b>Taxable</b>", self.styles["InvTableHeader"]),
-            Paragraph("<b>Rate</b>", self.styles["InvTableHeader"]),
-            Paragraph("<b>Tax Amt</b>", self.styles["InvTableHeader"]),
-            Paragraph("<b>Total</b>", self.styles["InvTableHeader"]),
-        ]
-
-        table_rows = [items_header]
-
-        for idx, item in enumerate(invoice.items, start=1):
-            desc_text = f"<b>{item.item_code}</b> - {item.description}<br/><font color='#64748B'>HS: {item.hs_code}</font>"
-            qty_text = f"{float(item.quantity):,.2f}<br/>{item.uom}"
-            unit_price_text = f"{float(item.unit_price):,.2f}"
-            gross_text = f"{float(item.gross_amount):,.2f}"
-            disc_text = f"{float(item.discount):,.2f}"
-            taxable_text = f"{float(item.taxable_amount):,.2f}"
-            rate_text = f"{float(item.tax_rate):.1f}%"
-            tax_amt_text = f"{float(item.tax_amount):,.2f}"
-            line_total_text = f"{float(item.line_total):,.2f}"
-
-            table_rows.append([
-                Paragraph(str(idx), self.styles["InvTableCell"]),
-                Paragraph(desc_text, self.styles["InvTableCell"]),
-                Paragraph(qty_text, self.styles["InvTableCell"]),
-                Paragraph(unit_price_text, self.styles["InvTableCellRight"]),
-                Paragraph(gross_text, self.styles["InvTableCellRight"]),
-                Paragraph(disc_text, self.styles["InvTableCellRight"]),
-                Paragraph(taxable_text, self.styles["InvTableCellRight"]),
-                Paragraph(rate_text, self.styles["InvTableCellRight"]),
-                Paragraph(tax_amt_text, self.styles["InvTableCellRight"]),
-                Paragraph(f"<b>{line_total_text}</b>", self.styles["InvTableCellRight"]),
-            ])
-
-        col_widths = [
-            8 * mm,    # #
-            56 * mm,   # Desc
-            16 * mm,   # Qty/UOM
-            18 * mm,   # Unit Price
-            17 * mm,   # Gross
-            13 * mm,   # Disc
-            17 * mm,   # Taxable
-            11 * mm,   # Rate
-            14 * mm,   # Tax Amt
-            16 * mm,   # Total
-        ]
-
-        items_table = Table(table_rows, colWidths=col_widths, repeatRows=1)
-        table_style = [
-            ("BACKGROUND", (0, 0), (-1, 0), self.primary_color),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("ALIGN", (0, 0), (0, -1), "CENTER"),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("TOPPADDING", (0, 0), (-1, -1), 3),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-            ("LEFTPADDING", (0, 0), (-1, -1), 3),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-            ("GRID", (0, 0), (-1, -1), 0.5, self.border_color),
-        ]
-
-        # Add alternating row colors for lines
-        for r in range(1, len(table_rows)):
-            if r % 2 == 0:
-                table_style.append(("BACKGROUND", (0, r), (-1, r), colors.HexColor("#F8FAFC")))
-
-        items_table.setStyle(TableStyle(table_style))
-        story.append(items_table)
-        story.append(Spacer(1, 4 * mm))
-
-        # 5. Summary & QR Code Block
-        # Never print a fabricated FBR verification QR for a draft or rejected invoice.
-        fbr_accepted = str(invoice.fbr_status).upper() == "VALID" and bool(invoice.fbr_invoice_number)
-        verified_production = fbr_accepted and not bool(invoice.fbr_is_simulated)
-        qr_payload = (invoice.fbr_qr_data or invoice.fbr_invoice_number) if fbr_accepted else None
-        qr_drawing = (
-            self._build_qr_code(qr_payload, size=1.0 * inch)
-            if qr_payload else Paragraph("QR unavailable until FBR acceptance", self.styles["InvSmall"])
-        )
-
-        summary_rows = [
-            [Paragraph("Subtotal (Gross):", self.styles["InvTableCellBold"]), Paragraph(f"PKR {float(invoice.subtotal):,.2f}", self.styles["InvTableCellRight"])],
-            [Paragraph("Total Discount:", self.styles["InvTableCellBold"]), Paragraph(f"PKR {float(invoice.total_discount):,.2f}", self.styles["InvTableCellRight"])],
-            [Paragraph("Taxable Amount:", self.styles["InvTableCellBold"]), Paragraph(f"PKR {float(invoice.taxable_amount):,.2f}", self.styles["InvTableCellRight"])],
-            [Paragraph("Total Sales Tax:", self.styles["InvTableCellBold"]), Paragraph(f"PKR {float(invoice.total_tax):,.2f}", self.styles["InvTableCellRight"])],
-        ]
-        if invoice.other_charges and float(invoice.other_charges) > 0:
-            summary_rows.append([
-                Paragraph("Other Charges:", self.styles["InvTableCellBold"]),
-                Paragraph(f"PKR {float(invoice.other_charges):,.2f}", self.styles["InvTableCellRight"])
-            ])
-        summary_rows.append([
-            Paragraph("<b>Grand Total:</b>", self.styles["InvSubtitle"]),
-            Paragraph(f"<b>PKR {float(invoice.grand_total):,.2f}</b>", self.styles["InvSubtitle"])
-        ])
-
-        summary_table = Table(summary_rows, colWidths=[40 * mm, 45 * mm])
-        summary_table.setStyle(TableStyle([
-            ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("TOPPADDING", (0, 0), (-1, -1), 2),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-            ("LEFTPADDING", (0, 0), (-1, -1), 4),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-            ("LINEABOVE", (0, -1), (-1, -1), 1, self.primary_color),
-        ]))
-
-        qr_text_note = (
-            ("<b>FBR Accepted Invoice</b><br/>" if verified_production else
-             "<b>Demo / Sandbox — Not a Production FBR Registration</b><br/>" if fbr_accepted else
-             "<b>FBR Verification Pending</b><br/>")
-            + "<font size='6.5' color='#64748B'>"
-            + (f"FBR Ref: {invoice.fbr_invoice_number}<br/>" if fbr_accepted else "No official FBR reference issued.<br/>")
-            + "Only an actual FBR acceptance confirms fiscal registration."
-            + "</font>"
-        )
-
-        qr_block_data = [
-            [
-                qr_drawing,
-                Paragraph(qr_text_note, self.styles["InvNormal"]),
-                summary_table,
-            ]
-        ]
-        qr_block_table = Table(qr_block_data, colWidths=[28 * mm, 73 * mm, 85 * mm])
-        qr_block_table.setStyle(TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("LEFTPADDING", (0, 0), (-1, -1), 2),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 2),
-            ("TOPPADDING", (0, 0), (-1, -1), 2),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
-        ]))
-
-        story.append(KeepTogether(qr_block_table))
-
-        # 6. Notes & Signatures
-        if invoice.notes:
-            story.append(Spacer(1, 3 * mm))
-            notes_p = Paragraph(f"<b>Notes / Terms:</b> {invoice.notes}", self.styles["InvSmall"])
-            story.append(notes_p)
-
-        story.append(Spacer(1, 5 * mm))
-        footer_p = Paragraph(
-            "This is a system-generated electronic invoice created via FBR Invoice Cloud. "
-            "Valid without physical signature under Pakistan Electronic Transactions Ordinance.",
-            self.styles["InvSmall"]
-        )
-        story.append(footer_p)
-
-        # Enforce watermark unless official valid production invoice
-        is_valid_official = (
-            str(invoice.status).upper() in ("VALID", "ISSUED", "PAID")
-            and bool(invoice.fbr_invoice_number)
-            and not bool(invoice.fbr_is_simulated)
-            and str(invoice.fbr_environment).upper() == "PRODUCTION"
-            and str(invoice.fbr_status).upper() in ("VALID", "SUCCESS", "POSTED")
-        )
-
-        def _draw_watermark(canvas, document):
-            if not is_valid_official:
-                canvas.saveState()
-                canvas.setFont("Helvetica-Bold", 34)
-                canvas.setFillColor(colors.HexColor("#CBD5E1"), alpha=0.35)
-                canvas.translate(A4[0] / 2, A4[1] / 2)
-                canvas.rotate(45)
-                canvas.drawCentredString(0, 0, "SIMULATED / PRE-SUBMISSION DRAFT")
-                canvas.restoreState()
-
-        # Build document
-        doc.build(story, onFirstPage=_draw_watermark, onLaterPages=_draw_watermark)
-        pdf_bytes = buffer.getvalue()
-        buffer.close()
-        return pdf_bytes
+    def generate(self, invoice, organization_name=None, hs_descriptions=None, qr_payload=None):
+        out = io.BytesIO()
+        doc = SimpleDocTemplate(out, pagesize=PAGE, leftMargin=28, rightMargin=28, topMargin=28, bottomMargin=42,
+            title=f"Invoice {invoice.invoice_number}", author=organization_name or invoice.seller_name)
+        cell = ParagraphStyle("cell", fontName="Helvetica", fontSize=6.5, leading=8.8, wordWrap="CJK")
+        header = ParagraphStyle("header", parent=cell, fontName="Helvetica-Bold", fontSize=6.7)
+        meta = ParagraphStyle("meta", parent=cell, fontSize=9, leading=14)
+        title = ParagraphStyle("title", parent=meta, fontName="Helvetica-Bold", fontSize=16, leading=20)
+        def para(v, style=cell): return Paragraph(escape(str(v if v is not None else "")), style)
+        def amount(v): return f"{Decimal(str(v or 0)):,.2f}"
+        accepted = invoice.fbr_status == "VALID" and bool(invoice.fbr_invoice_number)
+        simulated = bool(invoice.fbr_is_simulated or invoice.fbr_environment == "DEMO" or invoice.fbr_provider == "MOCK")
+        status = "Valid" if accepted and not simulated else "DEMO / SIMULATED" if simulated else "DRAFT / NOT FBR ACCEPTED"
+        env = (invoice.fbr_environment or "").upper()
+        story=[]
+        logo = Path(__file__).resolve().parents[1]/"assets"/"fbr_logo.png"
+        branding = Image(str(logo), width=65, height=65, mask='auto') if logo.exists() else para("FBR Digital Invoicing", header)
+        qr = self._build_qr_code(qr_payload or invoice.fbr_invoice_number) if accepted and not simulated else para("", cell)
+        top=Table([[para((organization_name or invoice.seller_name or "").upper(),title), branding, qr]], colWidths=[864,80,80])
+        top.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'MIDDLE'),('ALIGN',(1,0),(-1,-1),'RIGHT')]))
+        story += [top, Spacer(1,20)]
+        if not accepted or simulated or env == "SANDBOX":
+            label = "SANDBOX TEST INVOICE - NOT A PRODUCTION TAX INVOICE" if env == "SANDBOX" and not simulated else status
+            story += [para(label, ParagraphStyle("notice",parent=meta,fontName='Helvetica-Bold',textColor=colors.HexColor('#9a3412'))),Spacer(1,8)]
+        date = invoice.invoice_date
+        insertion = invoice.fbr_submission_date
+        from backend.app.core.fbr_taxpayer import normalize_seller_tax_id
+        def taxid(v):
+            try: return normalize_seller_tax_id(v) or "Unregistered"
+            except ValueError: return str(v or "Unregistered")
+        seller=["Seller Information",f"Business Name: {invoice.seller_name}",f"Registration No.: {taxid(invoice.seller_ntn)}",f"Province: {invoice.seller_province}",f"Source Invoice No.: {invoice.invoice_number}"]
+        buyer=["Buyer Information",f"Business Name: {invoice.buyer_name}",f"Registration No.: {taxid(invoice.buyer_ntn or invoice.buyer_cnic)}",f"Province: {invoice.buyer_province}"]
+        summary=["Invoice Summary",f"FBR Invoice No.: {invoice.fbr_invoice_number if accepted else 'Not assigned'}",f"Invoice Date: {date.strftime('%d-%b-%Y') if date else ''}",f"Invoice Type: {'Debit Note' if 'DEBIT' in str(invoice.invoice_type).upper() else 'Sale Invoice'}",f"Tax Period: {date.strftime('%Y%m') if date else ''}",f"Insertion Date: {insertion.strftime('%d-%b-%Y %I:%M %p') if insertion else 'Not recorded'}",f"Status: {status}"]
+        metadata=Table([[[para(s,meta) for s in seller],[para(s,meta) for s in buyer],[para(s,meta) for s in summary]]],colWidths=[350,350,324])
+        metadata.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'),('LEFTPADDING',(0,0),(-1,-1),0)]))
+        story += [metadata, Spacer(1,24)]
+        columns=['Sr. No.','HS Code','HS Code Description','Product Description','Sales Type','Quantity','UoM','Rate','Sales Value','Retail Price','Sales Tax','Extra Tax','Further Tax','FED','ST WHT','Discount','SRO / Schedule No.','SRO Item Sr. No.','Petroleum Levy On','Status']
+        weights=[2.5,5,11,11,7,3,4,3.5,5,4.5,4,4,4,3,4,4,6,4,4,3]
+        widths=[w/sum(weights)*1024 for w in weights]
+        rows=[[para(c,header) for c in columns]]
+        keys=['taxable_amount','fixed_notified_value_or_retail_price','tax_amount','extra_tax','further_tax','fed_payable','sales_tax_withheld_at_source','discount']
+        totals=[Decimal('0') for _ in keys]
+        from backend.app.core.fbr_hs_code import normalize_hs_code
+        for idx,item in enumerate(invoice.items,1):
+            values=[getattr(item,k,None) or 0 for k in keys]
+            totals=[t+Decimal(str(v)) for t,v in zip(totals,values)]
+            code=normalize_hs_code(item.hs_code)
+            data=[idx,code,(hs_descriptions or {}).get(code,''),item.description,item.sale_type,item.quantity,item.uom,item.rate_desc or f"{item.tax_rate}%",*[amount(v) for v in values],item.sro_reference or '',item.sro_item_serial_no or '',getattr(item,'petroleum_levy', '') or '', 'Valid' if accepted and not simulated else '']
+            rows.append([para(v) for v in data])
+        rows.append([para('') for _ in range(8)]+[para(amount(t),header) for t in totals]+[para('') for _ in range(4)])
+        rows[-1][7]=para('Total:',header)
+        table=LongTable(rows,colWidths=widths,repeatRows=1,hAlign='LEFT',splitByRow=1,splitInRow=1)
+        table.setStyle(TableStyle([('GRID',(0,0),(-1,-1),0.35,colors.HexColor('#b8bec5')),('VALIGN',(0,0),(-1,-1),'TOP'),('BACKGROUND',(0,0),(-1,0),colors.HexColor('#f4f6f8')),('TOPPADDING',(0,0),(-1,-1),6),('BOTTOMPADDING',(0,0),(-1,-1),6),('LEFTPADDING',(0,0),(-1,-1),3),('RIGHTPADDING',(0,0),(-1,-1),3)]))
+        story += [table,Spacer(1,12),para(f"Grand Total (PKR): {amount(invoice.grand_total)}",ParagraphStyle('total',parent=meta,fontName='Helvetica-Bold',alignment=2))]
+        if accepted and not simulated:
+            story += [para('QR: FBR response data' if qr_payload else 'QR: invoice reference only; no local verification signature is asserted.',cell)]
+        doc.build(story,canvasmaker=NumberedCanvas)
+        return out.getvalue()
 
     def generate_note(
         self,
@@ -662,6 +410,4 @@ class PDFInvoiceGenerator:
         buffer.close()
         return pdf_bytes
 
-
-# Global singleton
 pdf_generator = PDFInvoiceGenerator()

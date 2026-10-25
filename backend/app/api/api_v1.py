@@ -47,3 +47,6 @@ api_router.include_router(webhooks_router)
 api_router.include_router(external_invoices_router)
 
 
+
+from backend.app.api.routes.hs_search import router as hs_search_router
+api_router.include_router(hs_search_router)

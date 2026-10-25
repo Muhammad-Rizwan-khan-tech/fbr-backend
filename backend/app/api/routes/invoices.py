@@ -18,7 +18,7 @@ from backend.app.models.submission_job import InvoiceSubmissionJob, SubmissionJo
 from backend.app.models.document import DocumentType, BackgroundJob, BackgroundJobStatus
 from backend.app.models.base import now_utc
 from backend.app.schemas.invoice import (
-    InvoiceCreate, InvoiceResponse, InvoiceValidationResult
+    InvoiceCreate, InvoiceUpdate, InvoiceResponse, InvoiceValidationResult
 )
 from backend.app.schemas.fbr import FBRSubmissionResponse
 from backend.app.schemas.submission_job import InvoiceSubmissionJobResponse
@@ -44,7 +44,7 @@ def list_invoices(
     tenant: Organization = Depends(get_current_tenant),
     db: Session = Depends(get_db)
 ):
-    query = db.query(Invoice).filter(Invoice.tenant_id == tenant.id)
+    query = db.query(Invoice).filter(Invoice.tenant_id == tenant.id, Invoice.status != "DELETED")
 
     if status:
         query = query.filter(Invoice.status == status.upper())
@@ -111,7 +111,8 @@ def get_invoice(
 ):
     invoice = db.query(Invoice).filter(
         Invoice.id == invoice_id,
-        Invoice.tenant_id == tenant.id
+        Invoice.tenant_id == tenant.id,
+        Invoice.status != "DELETED"
     ).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -128,7 +129,8 @@ def get_invoice_fbr_payload(
     """Returns the exact PRAL DI API v1.12 Section 4.1 JSON payload for inspection."""
     invoice = db.query(Invoice).filter(
         Invoice.id == invoice_id,
-        Invoice.tenant_id == tenant.id
+        Invoice.tenant_id == tenant.id,
+        Invoice.status != "DELETED"
     ).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -151,7 +153,8 @@ def validate_invoice(
 ):
     invoice = db.query(Invoice).filter(
         Invoice.id == invoice_id,
-        Invoice.tenant_id == tenant.id
+        Invoice.tenant_id == tenant.id,
+        Invoice.status != "DELETED"
     ).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -174,7 +177,8 @@ def fbr_validate_invoice_remote(
     from backend.app.adapters.production_adapter import ProductionFBRAdapter
 
     invoice = db.query(Invoice).filter(
-        Invoice.id == invoice_id, Invoice.tenant_id == tenant.id
+        Invoice.id == invoice_id, Invoice.tenant_id == tenant.id,
+        Invoice.status != "DELETED"
     ).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -241,7 +245,8 @@ def fbr_submit_invoice_live(
 
     invoice = db.query(Invoice).filter(
         Invoice.id == invoice_id,
-        Invoice.tenant_id == tenant.id
+        Invoice.tenant_id == tenant.id,
+        Invoice.status != "DELETED"
     ).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -281,7 +286,8 @@ def queue_submit_to_fbr(
     """
     invoice = db.query(Invoice).filter(
         Invoice.id == invoice_id,
-        Invoice.tenant_id == tenant.id
+        Invoice.tenant_id == tenant.id,
+        Invoice.status != "DELETED"
     ).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -306,7 +312,8 @@ def get_invoice_submission_jobs(
     """Retrieve full history and retry timeline of FBR submission jobs for this invoice."""
     invoice = db.query(Invoice).filter(
         Invoice.id == invoice_id,
-        Invoice.tenant_id == tenant.id
+        Invoice.tenant_id == tenant.id,
+        Invoice.status != "DELETED"
     ).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -325,7 +332,8 @@ def get_invoice_pdf(
     """Retrieve or generate official PDF invoice with embedded FBR verification QR code."""
     invoice = db.query(Invoice).filter(
         Invoice.id == invoice_id,
-        Invoice.tenant_id == tenant.id
+        Invoice.tenant_id == tenant.id,
+        Invoice.status != "DELETED"
     ).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -382,7 +390,8 @@ def submit_to_fbr(
 ):
     invoice = db.query(Invoice).filter(
         Invoice.id == invoice_id,
-        Invoice.tenant_id == tenant.id
+        Invoice.tenant_id == tenant.id,
+        Invoice.status != "DELETED"
     ).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -405,7 +414,8 @@ def get_invoice_qr_code(
 ):
     invoice = db.query(Invoice).filter(
         Invoice.id == invoice_id,
-        Invoice.tenant_id == tenant.id
+        Invoice.tenant_id == tenant.id,
+        Invoice.status != "DELETED"
     ).first()
     if not invoice:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -453,7 +463,8 @@ def batch_submit_invoices(
 
     invoices = db.query(Invoice).filter(
         Invoice.id.in_(data.invoice_ids),
-        Invoice.tenant_id == tenant.id
+        Invoice.tenant_id == tenant.id,
+        Invoice.status != "DELETED"
     ).all()
 
     found_ids = {inv.id for inv in invoices}
@@ -621,3 +632,16 @@ def reconcile_fbr_invoices(
         "checked_count": len(invoices),
         "results": results,
     }
+
+
+@router.put("/{invoice_id}", response_model=InvoiceResponse)
+@router.patch("/{invoice_id}", response_model=InvoiceResponse)
+def update_invoice_record(invoice_id: str, data: InvoiceUpdate, tenant: Organization = Depends(get_current_tenant), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from backend.app.services.invoice_management import update_invoice
+    return update_invoice(db, tenant.id, invoice_id, data, current_user)
+
+
+@router.delete("/{invoice_id}")
+def remove_invoice_record(invoice_id: str, tenant: Organization = Depends(get_current_tenant), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from backend.app.services.invoice_management import remove_invoice
+    return remove_invoice(db, tenant.id, invoice_id, current_user)

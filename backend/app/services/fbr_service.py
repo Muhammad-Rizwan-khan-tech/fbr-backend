@@ -192,6 +192,15 @@ class FBRService:
         user_email: str,
         forced_scenario: str = "AUTO"
     ) -> FBRSubmission:
+        invoice = db.query(Invoice).filter(
+            Invoice.id == invoice.id, Invoice.tenant_id == invoice.tenant_id,
+        ).populate_existing().with_for_update().first()
+        if not invoice:
+            raise HTTPException(status_code=404, detail="Invoice not found")
+        if invoice.status in IN_FLIGHT_JOB_STATUSES or invoice.status == "SUBMITTING" or invoice.fbr_status == "PENDING":
+            raise HTTPException(status_code=409, detail="Invoice submission is already in flight")
+        if invoice.status in ("DELETED", "CANCELLED"):
+            raise HTTPException(status_code=409, detail="Removed or cancelled invoices cannot be submitted")
         if invoice.fbr_status == FBRSubmissionStatus.VALID.value:
             raise HTTPException(status_code=400, detail="Invoice has already been successfully submitted and verified with FBR")
 
@@ -334,9 +343,14 @@ class FBRService:
         if not submission:
             raise HTTPException(status_code=404, detail="Submission record not found")
 
-        invoice = db.query(Invoice).filter(Invoice.id == submission.invoice_id).first()
+        invoice = db.query(Invoice).filter(Invoice.id == submission.invoice_id, Invoice.tenant_id == submission.tenant_id).populate_existing().with_for_update().first()
         if not invoice:
             raise HTTPException(status_code=404, detail="Associated invoice not found")
+        if invoice.status in ("DELETED", "CANCELLED"):
+            raise HTTPException(status_code=409, detail="Removed or cancelled invoices cannot be submitted")
+
+        if invoice.status in IN_FLIGHT_JOB_STATUSES or invoice.status == "SUBMITTING" or invoice.fbr_status == "PENDING":
+            raise HTTPException(status_code=409, detail="Invoice submission is already in flight")
 
         # Retry only transient failures. Do not replay 4xx/validation failures,
         # or switch gateway mode/force a fake "VALID" scenario.
@@ -369,6 +383,9 @@ class FBRService:
             payload.get("sellerNTNCNIC"), payload.get("sellerAddress"), payload.get("sellerProvince")
         ):
             raise HTTPException(status_code=422, detail="Invoice contains incomplete seller details; create a corrected draft.")
+
+        invoice.status = InvoiceStatus.SUBMITTING.value
+        db.commit()
 
         start_time = time.time()
         adapter_res = adapter.submit_invoice(payload)
@@ -446,6 +463,16 @@ class FBRService:
         2. Database-level state guards (prevents duplicate submission if already VALID or in-flight)
         3. Clear provenance tracking (DEMO/MOCK vs PRODUCTION)
         """
+        if invoice.status in ("DELETED", "CANCELLED"):
+            raise ConflictError("Removed or cancelled invoices cannot be submitted.")
+
+        # Serialize queue creation against tenant-scoped edit/remove transactions.
+        invoice = db.query(Invoice).filter(
+            Invoice.id == invoice.id, Invoice.tenant_id == invoice.tenant_id,
+        ).populate_existing().with_for_update().first()
+        if not invoice or invoice.status in ("DELETED", "CANCELLED"):
+            raise ConflictError("Removed or cancelled invoices cannot be submitted.")
+
         # 1. Check if invoice is already accepted
         if invoice.fbr_status == FBRSubmissionStatus.VALID.value or invoice.status == InvoiceStatus.VALID.value:
             existing_accepted = (
