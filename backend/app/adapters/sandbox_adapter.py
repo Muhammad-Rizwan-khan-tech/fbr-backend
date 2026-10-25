@@ -322,24 +322,20 @@ class SandboxFBRAdapter(FBRAdapter):
             }
 
             extra_tax = itm.get("extraTax") if itm.get("extraTax") is not None else itm.get("extra_tax")
-            if extra_tax is not None and float(extra_tax) > 0:
-                item_dict["extraTax"] = float(round(float(extra_tax), 2))
+            item_dict["extraTax"] = float(round(float(extra_tax if extra_tax is not None and extra_tax != "" else 0), 2))
 
             further_tax = itm.get("furtherTax") if itm.get("furtherTax") is not None else itm.get("further_tax")
-            if further_tax is not None and float(further_tax) > 0:
-                item_dict["furtherTax"] = float(round(float(further_tax), 2))
+            item_dict["furtherTax"] = float(round(float(further_tax if further_tax is not None and further_tax != "" else 0), 2))
 
             sro_sched = itm.get("sroScheduleNo") or itm.get("sro_schedule_no") or itm.get("sro_reference")
             if sro_sched:
                 item_dict["sroScheduleNo"] = str(sro_sched).strip()
 
             fed_pay = itm.get("fedPayable") if itm.get("fedPayable") is not None else itm.get("fed_payable")
-            if fed_pay is not None and float(fed_pay) > 0:
-                item_dict["fedPayable"] = float(round(float(fed_pay), 2))
+            item_dict["fedPayable"] = float(round(float(fed_pay if fed_pay is not None and fed_pay != "" else 0), 2))
 
             discount = itm.get("discount")
-            if discount is not None and float(discount) > 0:
-                item_dict["discount"] = float(round(float(discount), 2))
+            item_dict["discount"] = float(round(float(discount if discount is not None and discount != "" else 0), 2))
 
             sro_serial = itm.get("sroItemSerialNo") or itm.get("sro_item_serial_no")
             if sro_serial:
@@ -951,3 +947,4 @@ class SandboxFBRAdapter(FBRAdapter):
             provider=self.provider,
             is_simulated=False,
         )
+

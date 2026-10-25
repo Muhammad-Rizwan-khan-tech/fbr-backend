@@ -6,6 +6,7 @@ import pytest
 
 from backend.app.adapters.gateway_response import inspect_gateway_response
 from backend.app.adapters.sandbox_adapter import SandboxFBRAdapter
+from backend.app.adapters.production_adapter import ProductionFBRAdapter
 
 
 class FakeResponse:
@@ -168,3 +169,40 @@ def test_untrusted_gateway_never_receives_sandbox_invoice():
     assert outcome.error_code == "FBR-SBX-GATEWAY-CONFIG"
     assert outcome.is_simulated is False
     assert http.call_count == 0
+
+
+@pytest.mark.parametrize("adapter_class", [SandboxFBRAdapter, ProductionFBRAdapter])
+@pytest.mark.parametrize("optional", [{}, {"extraTax": None, "discount": ""}, {"extraTax": 0, "discount": 0}])
+def test_zero_numeric_fields_are_always_serialized(adapter_class, optional):
+    adapter = adapter_class(base_url="https://gw.fbr.gov.pk", bearer_token="fixture")
+    payload = adapter._transform_to_fbr_schema({"items": [{"quantity": 3, "valueSalesExcludingST": 21000, "salesTaxApplicable": 3780, **optional}]})
+    item = payload["items"][0]
+    for key in ("extraTax", "furtherTax", "fedPayable", "discount"):
+        assert item[key] == 0.0
+        assert isinstance(item[key], (int, float))
+    assert item["totalValues"] == 24780
+
+
+def test_real_http_response_with_literal_control_character_is_an_invalid_invoice():
+    body = '{"validationResponse":{"statusCode":"01","status":"Invalid","invoiceStatuses":[{"itemSNo":"1","status":"Invalid","errorCode":"0300","error":"Provided numeric value\nDiscount Value is not valid"}]}}'
+    _, result = submit_response(httpx.Response(200, text=body, headers={"content-type": "application/json"}))
+    assert not result.success
+    assert result.error_code == "FBR-SBX-0300"
+    assert result.status == "INVALID"
+    assert result.fbr_invoice_number is None
+
+
+def test_malformed_gateway_rejection_keeps_error_code_without_acceptance():
+    body = '{"validationResponse":{"statusCode":"01","status":"Invalid","invoiceStatuses":[{"errorCode":"0300","error":"Provided numeric value "discount" is invalid"}]}}'
+    _, result = submit_response(httpx.Response(200, text=body))
+    assert result.error_code == "FBR-SBX-0300"
+    assert result.status == "INVALID"
+    assert not result.success
+
+
+def test_malformed_valid_looking_body_cannot_be_recovered_as_acceptance():
+    body = '{"invoiceNumber":"fake","validationResponse":{"statusCode":"00","status":"Valid","error":"bad\njson"}}'
+    _, result = submit_response(httpx.Response(200, text=body))
+    assert not result.success
+    assert result.fbr_invoice_number is None
+

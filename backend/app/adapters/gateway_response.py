@@ -44,6 +44,35 @@ def inspect_gateway_response(response: Any) -> Tuple[Optional[Dict[str, Any]], D
     except (ValueError, TypeError):
         decoded = None
 
+    # Some FBR rejection messages contain literal control characters inside
+    # quoted JSON strings. Decode those only as rejections, never as acceptance.
+    if decoded is None and raw_text.lstrip().startswith("{"):
+        try:
+            rejected = json.loads(raw_text, strict=False)
+        except (ValueError, TypeError):
+            rejected = None
+        validation = rejected.get("validationResponse") if isinstance(rejected, dict) else None
+        if isinstance(validation, dict) and (
+            str(validation.get("statusCode")) == "01"
+            and str(validation.get("status", "")).lower() == "invalid"
+        ):
+            diagnostic["response_kind"] = "nonstandard_json_rejection"
+            return rejected, diagnostic
+        # A malformed body must never become a successful invoice. Extract only
+        # explicit failure codes to avoid obscuring the actionable FBR rejection.
+        if (re.search(r'"validationResponse"\s*:', raw_text)
+                and re.search(r'"statusCode"\s*:\s*"01"', raw_text)
+                and re.search(r'"status"\s*:\s*"Invalid"', raw_text, re.I)):
+            codes = re.findall(r'"errorCode"\s*:\s*"([0-9]{4})"', raw_text)
+            if codes:
+                hint = ("FBR rejected an invalid numeric invoice field. Check quantity, totalValues, "
+                        "discount, fedPayable, extraTax, furtherTax and salesTaxWithheldAtSource. "
+                        "All numeric fields must be supplied as numbers, including zero values."
+                        if "0300" in codes else "FBR rejected the invoice; its response body was malformed.")
+                diagnostic["response_kind"] = "malformed_json_rejection"
+                return {"validationResponse": {"statusCode": "01", "status": "Invalid",
+                        "errorCode": codes[0], "error": hint}}, diagnostic
+
     # Decode string-wrapped JSON once or twice, without treating arbitrary
     # string responses like accepted invoices.
     depth = 0
@@ -86,3 +115,4 @@ def inspect_gateway_response(response: Any) -> Tuple[Optional[Dict[str, Any]], D
     if not diagnostic.get("gateway_hint"):
         diagnostic.pop("gateway_hint", None)
     return None, diagnostic
+
