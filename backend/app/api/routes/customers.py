@@ -25,7 +25,7 @@ def list_customers(
         query = query.filter(Customer.is_active == is_active)
     if search:
         s = f"%{search}%"
-        query = query.filter((Customer.name.ilike(s)) | (Customer.ntn.ilike(s)) | (Customer.strn.ilike(s)))
+        query = query.filter((Customer.name.ilike(s)) | (Customer.ntn.ilike(s)) | (Customer.strn.ilike(s)) | (Customer.cnic.ilike(s)))
     return query.order_by(Customer.name).all()
 
 
@@ -36,6 +36,8 @@ def create_customer(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    from backend.app.services.master_management import validate_changes
+    data = CustomerCreate(**validate_changes(data.model_dump(), ['name','address','city','province','registration_type','buyer_type','is_active'], 'Customer'))
     customer = Customer(
         tenant_id=tenant.id,
         created_by=current_user.id,
@@ -97,22 +99,21 @@ def update_customer(
     if not cust:
         raise HTTPException(status_code=404, detail="Customer not found")
 
-    for field, val in data.model_dump(exclude_unset=True).items():
+    changes = data.model_dump(exclude_unset=True)
+    from backend.app.services.master_management import validate_changes
+    changes = validate_changes(changes, ['name', 'address', 'city', 'province', 'registration_type', 'buyer_type', 'is_active'], 'Customer')
+    before = {field: getattr(cust, field) for field in changes}
+    for field, val in changes.items():
         setattr(cust, field, val)
 
     cust.updated_by = current_user.id
+    AuditService.log(db=db, tenant_id=tenant.id, action="UPDATE_CUSTOMER", entity="Customer", entity_id=cust.id, user_id=current_user.id, user_email=current_user.email, before_state=before, after_state=changes, commit=False)
     db.commit()
     db.refresh(cust)
-
-    AuditService.log(
-        db=db,
-        tenant_id=tenant.id,
-        action="UPDATE_CUSTOMER",
-        entity="Customer",
-        entity_id=cust.id,
-        user_id=current_user.id,
-        user_email=current_user.email,
-        after_state=data.model_dump(exclude_unset=True)
-    )
-
     return cust
+
+
+@router.delete("/{customer_id}")
+def delete_customer(customer_id: str, tenant: Organization = Depends(get_current_tenant), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from backend.app.services.master_management import remove_master
+    return remove_master(db, tenant.id, customer_id, Customer, current_user)

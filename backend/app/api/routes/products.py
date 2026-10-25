@@ -36,6 +36,9 @@ def create_product(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    from backend.app.services.master_management import validate_changes
+    clean = validate_changes(data.model_dump(), ['item_code','name','hs_code','uom','sale_type','tax_rate','unit_price','is_active'], 'Product')
+    data = ProductCreate(**clean)
     # Check duplicate item code in tenant
     existing = db.query(Product).filter(
         Product.tenant_id == tenant.id,
@@ -100,12 +103,27 @@ def update_product(
     if not prod:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    for field, val in data.model_dump(exclude_unset=True).items():
+    changes = data.model_dump(exclude_unset=True)
+    from backend.app.services.master_management import validate_changes
+    changes = validate_changes(changes, ['item_code', 'name', 'hs_code', 'uom', 'sale_type', 'tax_rate', 'unit_price', 'is_active'], 'Product')
+    before = {field: getattr(prod, field) for field in changes}
+    if "item_code" in changes:
+        duplicate = db.query(Product.id).filter(Product.tenant_id == tenant.id, Product.item_code == changes['item_code'], Product.id != product_id).first()
+        if duplicate:
+            raise HTTPException(409, "Product with this item code already exists")
+    for field, val in changes.items():
         if field == "item_code" and val:
             val = val.upper()
         setattr(prod, field, val)
 
     prod.updated_by = current_user.id
+    AuditService.log(db=db, tenant_id=tenant.id, action="UPDATE_PRODUCT", entity="Product", entity_id=prod.id, user_id=current_user.id, user_email=current_user.email, before_state=before, after_state=changes, commit=False)
     db.commit()
     db.refresh(prod)
     return prod
+
+
+@router.delete("/{product_id}")
+def delete_product(product_id: str, tenant: Organization = Depends(get_current_tenant), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from backend.app.services.master_management import remove_master
+    return remove_master(db, tenant.id, product_id, Product, current_user)

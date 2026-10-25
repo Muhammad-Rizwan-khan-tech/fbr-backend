@@ -25,6 +25,8 @@ class CustomerCreate(CustomerBase):
 
 
 class CustomerUpdate(BaseModel):
+    postal_code: Optional[str] = None
+    country: Optional[str] = None
     name: Optional[str] = None
     ntn: Optional[str] = None
     strn: Optional[str] = None
