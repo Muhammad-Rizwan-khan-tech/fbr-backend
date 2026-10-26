@@ -409,7 +409,8 @@ class InvoiceService:
         data: InvoiceCreate,
     ) -> InvoiceValidationResult:
         """Validates an unsaved draft invoice against PRAL rules without persisting to database."""
-        errors = []
+        from backend.app.core.fbr_extra_tax import reduced_extra_tax_errors
+        errors = reduced_extra_tax_errors(data.items)
         warnings = []
         line_item_errors = []
         structured_errors = []

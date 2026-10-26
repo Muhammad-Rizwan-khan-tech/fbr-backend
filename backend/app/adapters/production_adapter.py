@@ -1,3 +1,4 @@
+from backend.app.core.fbr_extra_tax import extra_tax_wire_value, reduced_extra_tax_errors
 import hashlib
 import json
 import logging
@@ -266,7 +267,9 @@ class ProductionFBRAdapter(FBRAdapter):
 
             # Optional item fields: include only when non-zero / present
             extra_tax = itm.get("extraTax") if itm.get("extraTax") is not None else itm.get("extra_tax")
-            item_dict["extraTax"] = float(round(float(extra_tax if extra_tax is not None and extra_tax != "" else 0), 2))
+            wire_extra_tax = extra_tax_wire_value(sale_type, extra_tax)
+            if wire_extra_tax is not None:
+                item_dict["extraTax"] = wire_extra_tax
 
             further_tax = itm.get("furtherTax") if itm.get("furtherTax") is not None else itm.get("further_tax")
             item_dict["furtherTax"] = float(round(float(further_tax if further_tax is not None and further_tax != "" else 0), 2))
@@ -320,7 +323,7 @@ class ProductionFBRAdapter(FBRAdapter):
 
     def validate_invoice(self, invoice_data: Dict[str, Any]) -> Dict[str, Any]:
         """Validates payload against DI API v1.12 schema and production requirements."""
-        errors: List[str] = []
+        errors: List[str] = reduced_extra_tax_errors(invoice_data.get("items", []))
         warnings: List[str] = []
 
         if not self.is_configured():
