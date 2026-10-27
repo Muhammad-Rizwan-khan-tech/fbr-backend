@@ -13,11 +13,11 @@ def payload(sale_type='Goods at Reduced Rate', extra=0):
 
 @pytest.mark.parametrize('adapter_type',[SandboxFBRAdapter,ProductionFBRAdapter])
 @pytest.mark.parametrize('extra',[0,0.0,Decimal('0.00'),'',None])
-def test_reduced_zero_is_omitted_and_transform_is_idempotent(adapter_type,extra):
+def test_reduced_zero_is_empty_and_transform_is_idempotent(adapter_type,extra):
     adapter=adapter_type(bearer_token='test-fixture-not-real')
     original=payload(extra=extra);before=deepcopy(original)
     wire=adapter._transform_to_fbr_schema(original)
-    assert 'extraTax' not in wire['items'][0]
+    assert wire['items'][0]['extraTax']==''
     assert adapter._transform_to_fbr_schema(wire)==wire
     assert original==before
     assert wire['items'][0]['totalValues']==101 and wire['items'][0]['salesTaxApplicable']==1
@@ -50,7 +50,7 @@ def test_reduced_rate_names(name):assert is_reduced_rate(name)
 def test_mixed_lines_use_their_own_sale_type():
     data=payload();standard=deepcopy(data['items'][0]);standard.update(saleType='Goods at standard rate (default)',extraTax=5,rate='18%');data['items'].append(standard)
     items=SandboxFBRAdapter()._transform_to_fbr_schema(data)['items']
-    assert 'extraTax' not in items[0] and items[1]['extraTax']==5
+    assert items[0]['extraTax']=='' and items[1]['extraTax']==5
     assert lookup_pral_error('0091').related_field=='extraTax'
 
 from backend.tests.test_invoice_management_features import case
@@ -62,9 +62,9 @@ def test_persisted_and_unsaved_preview_share_correct_wire_and_local_guard(case):
     inv.scenario_id='SN028';inv.items[0].sale_type='Goods at Reduced Rate';inv.items[0].tax_rate=1;inv.items[0].extra_tax=0
     db.commit()
     wire=InvoiceService.serialize_invoice_to_fbr_v112(db,inv,environment='SANDBOX')
-    assert 'extraTax' not in wire['items'][0]
+    assert wire['items'][0]['extraTax']==''
     def draft(extra):return InvoiceCreate(branch_id='b',customer_id='c',scenario_id='SN028',items=[dict(item_code='UPS',description='UPS',hs_code='8504.4010',quantity=1,unit_price=100,tax_rate=1,sale_type='Goods at Reduced Rate',extra_tax=extra)])
     wire=InvoiceService.serialize_draft_to_fbr_v112(db,'t',draft(0),environment='SANDBOX')
-    assert 'extraTax' not in wire['items'][0]
+    assert wire['items'][0]['extraTax']==''
     result=InvoiceService.validate_draft_invoice(db,'t',draft(5))
     assert not result.is_valid and any('[0091]' in e for e in result.errors)

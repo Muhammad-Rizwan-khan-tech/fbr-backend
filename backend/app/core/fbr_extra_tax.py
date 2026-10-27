@@ -1,4 +1,4 @@
-"""Conditional optional extraTax serialization for reduced-rate supplies (0091)."""
+"""Conditional empty extraTax serialization for reduced-rate supplies (0091)."""
 import re
 from decimal import Decimal, InvalidOperation
 
@@ -10,10 +10,11 @@ def is_reduced_rate(sale_type):
 
 def extra_tax_wire_value(sale_type, raw):
     amount = Decimal(str(raw if raw is not None and raw != '' else 0))
-    # FBR rejects the presence of extraTax even when its numeric value is zero.
-    # Keep the database zero and totals intact; omit only this optional wire key.
+    # This gateway rejects numeric zero (0091) and a missing key (0300).
+    # The reduced-rate exception uses an explicit empty string; other tax fields
+    # remain numeric. Do not drop a non-zero financial amount.
     if is_reduced_rate(sale_type) and amount == 0:
-        return None
+        return ""
     return float(round(amount, 2))
 
 

@@ -40,9 +40,9 @@ class PRALErrorCode:
 PRAL_ERROR_REGISTRY: Dict[str, PRALErrorCode] = {
     "0091": PRALErrorCode(
         code="0091", category="SALES", description="Extra tax must be empty for reduced-rate goods",
-        human_explanation="The gateway rejects extraTax on reduced-rate supplies, including an explicitly serialized zero.",
+        human_explanation="The gateway requires an empty extraTax value for reduced-rate supplies; numeric zero and a missing key can be rejected.",
         related_field="extraTax",
-        recommended_action="Keep reduced-rate extra tax at zero internally and omit the optional extraTax key in the FBR request. Correct non-zero tax or the sale classification before resubmitting.",
+        recommended_action="Keep reduced-rate extra tax at zero internally and send an explicit empty extraTax string in the FBR request. Correct non-zero tax or the sale classification before resubmitting.",
     ),
     # Authentication & Security Errors (Section 3.1 & 7)
     "0401": PRALErrorCode(

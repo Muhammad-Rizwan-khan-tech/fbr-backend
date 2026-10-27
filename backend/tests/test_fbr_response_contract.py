@@ -206,3 +206,11 @@ def test_malformed_valid_looking_body_cannot_be_recovered_as_acceptance():
     assert not result.success
     assert result.fbr_invoice_number is None
 
+
+
+def test_malformed_numeric_error_retains_allowlisted_field_and_no_blanket_number_rule():
+    body='{"validationResponse":{"statusCode":"01","status":"Invalid","errorCode":"0300","error":"Decimal value "invalid" at item 1 for ExtraTax"}}'
+    decoded,diagnostic=inspect_gateway_response(httpx.Response(200,text=body))
+    assert diagnostic['invalid_numeric_field']=='extraTax'
+    assert 'extraTax' in decoded['validationResponse']['error']
+    assert 'All numeric fields must' not in decoded['validationResponse']['error']

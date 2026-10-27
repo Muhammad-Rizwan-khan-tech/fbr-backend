@@ -65,9 +65,14 @@ def inspect_gateway_response(response: Any) -> Tuple[Optional[Dict[str, Any]], D
                 and re.search(r'"status"\s*:\s*"Invalid"', raw_text, re.I)):
             codes = re.findall(r'"errorCode"\s*:\s*"([0-9]{4})"', raw_text)
             if codes:
-                hint = ("FBR rejected an invalid numeric invoice field. Check quantity, totalValues, "
-                        "discount, fedPayable, extraTax, furtherTax and salesTaxWithheldAtSource. "
-                        "All numeric fields must be supplied as numbers, including zero values."
+                numeric_fields = ("quantity", "totalValues", "discount", "fedPayable", "extraTax", "furtherTax", "salesTaxWithheldAtSource", "valueSalesExcludingST", "fixedNotifiedValueOrRetailPrice", "salesTaxApplicable")
+                # Read only allow-listed field names, never arbitrary body text.
+                field_match = re.search(r'(?:for|field|value)\s*[:=]?\s*["\']?(' + '|'.join(numeric_fields) + r')\b', raw_text, re.I)
+                field = next((name for name in numeric_fields if field_match and name.lower() == field_match.group(1).lower()), None)
+                if field:
+                    diagnostic["invalid_numeric_field"] = field
+                hint = ((f"FBR rejected numeric field {field}. Check its value and the applicable sale-type contract." if field else
+                         "FBR rejected a numeric field but its malformed response did not identify the field safely. Check the request against the sale-type contract; this message does not identify a single cause.")
                         if "0300" in codes else
                         "FBR rejected the HS code. Use an 8-digit code from the official FBR HS catalog (e.g. 8471.3010), and check its sale type/UOM mapping."
                         if any(code in codes for code in ("0019", "0044", "0052")) else
