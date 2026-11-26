@@ -75,6 +75,13 @@ def _clients(root):
 def _run(binary, args, env):
     result = subprocess.run([str(binary), *args], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600)
     if result.returncode:
+        first_line = result.stderr.decode(errors="replace").splitlines()[:1]
+        diagnostic = first_line[0] if first_line else "no client diagnostic"
+        diagnostic = re.sub(r"postgres(?:ql)?://\S+", "[redacted URL]", diagnostic)
+        for key, value in env.items():
+            if "PASSWORD" in key and value:
+                diagnostic = diagnostic.replace(value, "[redacted]")
+        print("FBR_TRANSFER_CLIENT_DIAGNOSTIC " + diagnostic[:300], flush=True)
         # Never log SQL, row contents, credentials or raw connection errors.
         raise RuntimeError("PostgreSQL " + binary.name + " failed (exit " + str(result.returncode) + ")")
     return result.stdout.decode()
@@ -96,6 +103,7 @@ def run_transfer_if_requested():
     if target_cfg.get("host") != "dpg-dc45nd4ipgvc738n8keg-a.ohio-postgres.render.com":
         raise RuntimeError("Unexpected migration destination")
     src = None
+    stage = "destination-check"
     try:
         with psycopg.connect(_dsn(target_url), connect_timeout=20, autocommit=True) as dst:
             dst.execute("SELECT pg_advisory_lock(20261126, 4711)")
@@ -111,9 +119,11 @@ def run_transfer_if_requested():
                 raise RuntimeError("Destination has active transactions")
             with tempfile.TemporaryDirectory(prefix="fbr-transfer-") as directory:
                 root = Path(directory)
+                stage = "download-clients"
                 bins, libs = _clients(root)
                 src_env, dst_env = _environment(source_url), _environment(target_url)
                 src_env["LD_LIBRARY_PATH"] = dst_env["LD_LIBRARY_PATH"] = libs
+                stage = "source-snapshot"
                 src = psycopg.connect(_dsn(source_url), connect_timeout=20)
                 src.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
                 src.execute("SET LOCAL timezone='UTC'")
@@ -128,6 +138,7 @@ def run_transfer_if_requested():
                 snapshot = src.execute("SELECT pg_export_snapshot()").fetchone()[0]
                 signatures = {name: _signature(src, name) for name in tables}
                 dump = root / "source.dump"
+                stage = "dump-source"
                 _run(bins / "pg_dump", ["--format=custom", "--schema=public", "--no-owner", "--no-acl", "--snapshot=" + snapshot, "--file=" + str(dump)], src_env)
                 toc = _run(bins / "pg_restore", ["--list", str(dump)], dst_env)
                 restored_sql = root / "restore.sql"
@@ -145,6 +156,7 @@ def run_transfer_if_requested():
                         out.write("\nDO $verify$ DECLARE c bigint; d text; BEGIN SELECT count(*), md5(coalesce(string_agg(h, '' ORDER BY h), '')) INTO c,d FROM (SELECT md5(row_to_json(t)::text) h FROM public." + ident + " t) s; IF c <> " + str(count) + " OR d <> '" + digest + "' THEN RAISE EXCEPTION 'Migration row verification failed'; END IF; END $verify$;\n")
                     out.write("CREATE SCHEMA fbr_transfer_meta; CREATE TABLE fbr_transfer_meta.completed(source_database text PRIMARY KEY, completed_at timestamptz NOT NULL DEFAULT now(), table_count integer NOT NULL, row_count bigint NOT NULL, backup_schema text NOT NULL);\n")
                     out.write("INSERT INTO fbr_transfer_meta.completed(source_database,table_count,row_count,backup_schema) VALUES ('fbr_cloud',38," + str(sum(v[0] for v in signatures.values())) + ",'" + BACKUP_SCHEMA + "');\nCOMMIT;\n")
+                stage = "transactional-restore"
                 _run(bins / "psql", ["-X", "-v", "ON_ERROR_STOP=1", "--file=" + str(script)], dst_env)
                 print("FBR_DATABASE_TRANSFER_COMPLETE tables=38 rows=" + str(sum(v[0] for v in signatures.values())) + " backup_schema=" + BACKUP_SCHEMA, flush=True)
                 # Keep writes blocked until Render has routed traffic to this instance
@@ -157,7 +169,7 @@ def run_transfer_if_requested():
                 threading.Thread(target=release, daemon=True).start()
                 src = None
     except Exception as error:
-        print("FBR_DATABASE_TRANSFER_FAILED type=" + type(error).__name__, flush=True)
+        print("FBR_DATABASE_TRANSFER_FAILED stage=" + stage + " type=" + type(error).__name__, flush=True)
         raise RuntimeError("Database transfer failed safely; do not retry without inspection") from None
     finally:
         if src is not None:
