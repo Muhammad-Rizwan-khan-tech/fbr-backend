@@ -34,7 +34,8 @@ def _environment(dsn):
         if key.startswith("PG"):
             env.pop(key)
     for key, value in cfg.items():
-        env["PG" + key.upper()] = value
+        name = {"dbname": "PGDATABASE", "connect_timeout": "PGCONNECT_TIMEOUT", "application_name": "PGAPPNAME"}.get(key, "PG" + key.upper())
+        env[name] = value
     env["PGCONNECT_TIMEOUT"] = "20"
     env["PGOPTIONS"] = "-c timezone=UTC -c extra_float_digits=3"
     return env
