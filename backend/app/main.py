@@ -20,8 +20,6 @@ import backend.app.models  # noqa: F401 - register all ORM models
 
 # Configure production JSON structured logging
 setup_logging(level=settings.LOG_LEVEL)
-from backend.app.core.one_time_transfer import run_transfer_if_requested
-run_transfer_if_requested()
 ensure_schema_columns(engine)
 
 
