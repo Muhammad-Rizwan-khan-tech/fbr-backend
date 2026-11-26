@@ -18,8 +18,12 @@ from psycopg.conninfo import conninfo_to_dict
 
 BACKUP_SCHEMA = "before_transfer_20261126"
 PACKAGES = {
-    "postgresql-client-18_18.7-1.pgdg12%2B5_amd64.deb":
+    "https://apt.postgresql.org/pub/repos/apt/pool/main/p/postgresql-18/postgresql-client-18_18.7-1.pgdg12%2B5_amd64.deb":
         "196d499b4e965fe379bf7a51c7515c39e3553e839258b335d0ee6859e90742bb",
+    "https://apt.postgresql.org/pub/repos/apt/pool/main/p/postgresql-18/libpq5_18.7-1.pgdg12%2B2_amd64.deb":
+        "1da70ff2dbebd26da6b6a225f65b0d2a9a959dd6cfa7b0119af763c5e8b3a9e0",
+    "https://deb.debian.org/debian/pool/main/o/openldap/libldap-2.5-0_2.5.13+dfsg-5_amd64.deb":
+        "4b6c30f6554149c594628d945edc6003f0eea8d0cc1341638c0e71375db147ed",
 }
 
 
@@ -42,8 +46,8 @@ def _environment(dsn):
 
 
 def _clients(root):
-    for filename, digest in PACKAGES.items():
-        with urlopen("https://apt.postgresql.org/pub/repos/apt/pool/main/p/postgresql-18/" + filename, timeout=60) as response:
+    for url, digest in PACKAGES.items():
+        with urlopen(url, timeout=60) as response:
             blob = response.read()
         if hashlib.sha256(blob).hexdigest() != digest:
             raise RuntimeError("PostgreSQL client checksum mismatch")
@@ -63,13 +67,7 @@ def _clients(root):
             offset += 60 + size + size % 2
         else:
             raise RuntimeError("Missing PostgreSQL client archive")
-    import psycopg_binary
-    bundled = Path(psycopg_binary.__file__).resolve().parent.parent / "psycopg_binary.libs"
-    pq = next(bundled.glob("libpq-*.so*"))
-    lib = root / "pq"
-    lib.mkdir()
-    (lib / "libpq.so.5").symlink_to(pq)
-    return root / "usr/lib/postgresql/18/bin", str(lib) + ":" + str(bundled)
+    return root / "usr/lib/postgresql/18/bin", str(root / "usr/lib/x86_64-linux-gnu")
 
 
 def _run(binary, args, env):
